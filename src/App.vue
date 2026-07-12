@@ -1,5 +1,7 @@
 <script setup>
-import { computed, nextTick, onMounted, ref } from "vue";
+import { computed, nextTick, onMounted, ref, watch } from "vue";
+import { useRoute, useRouter } from "vue-router";
+import { useDisplay } from "vuetify";
 
 import AdjacentDayEar from "./components/AdjacentDayEar.vue";
 import FavoritesView from "./components/FavoritesView.vue";
@@ -34,8 +36,11 @@ import {
 } from "./composables/useCampaignStore.js";
 
 const store = useCampaignStore();
+const route = useRoute();
+const router = useRouter();
+const { mdAndUp } = useDisplay();
 const drawer = ref(false);
-const viewMode = ref("day");
+const viewMode = ref(route.meta.viewMode ?? "day");
 const priorView = ref("day");
 const statsReference = ref(null);
 const returnDate = ref(null);
@@ -72,6 +77,51 @@ const selectedIndex = computed(() => campaignDates.indexOf(selectedDate.value));
 const previousDate = computed(() => campaignDates[selectedIndex.value - 1] ?? null);
 const nextDate = computed(() => campaignDates[selectedIndex.value + 1] ?? null);
 
+function routeParam(value) {
+  return Array.isArray(value) ? value[0] : value;
+}
+
+function routeLocation(mode, date = selectedDate.value) {
+  if (mode === "day") return { name: "day", params: { date } };
+  if (mode === "week") return { name: "week", params: { date } };
+  if (mode === "month") return { name: "month", params: { month: date.slice(0, 7) } };
+  if (mode === "week-stats") {
+    return {
+      name: "week-stats",
+      params: { date: getCampaignWeek(date).startDate },
+      query: { from: selectedDate.value },
+    };
+  }
+  if (mode === "total") return { name: "total" };
+  if (mode === "favorites") return { name: "favorites" };
+  return { name: "raffle" };
+}
+
+function applyRouteState() {
+  const mode = String(route.meta.viewMode ?? "day");
+  const date = routeParam(route.params.date);
+  const month = routeParam(route.params.month);
+
+  viewMode.value = mode;
+  if (mdAndUp.value) drawer.value = true;
+  if (date && campaignDates.includes(date)) store.setSelectedDate(date);
+  if (mode === "month" && month && !selectedDate.value.startsWith(month)) {
+    const firstDate = campaignDates.find((candidate) => candidate.startsWith(month));
+    if (firstDate) store.setSelectedDate(firstDate);
+  }
+  if (mode === "week-stats") {
+    const referenceDate = date && campaignDates.includes(date) ? date : selectedDate.value;
+    statsReference.value = getCampaignWeek(referenceDate).startDate;
+    const from = routeParam(route.query.from);
+    returnDate.value = from && campaignDates.includes(from) ? from : null;
+  }
+}
+
+watch(() => route.fullPath, applyRouteState, { immediate: true });
+watch(mdAndUp, (desktop) => {
+  drawer.value = desktop;
+}, { immediate: true });
+
 function earLabel(date) {
   if (!date) return "";
   const [, month, day] = date.split("-");
@@ -89,6 +139,7 @@ function navigateDate(delta) {
   statsReference.value = null;
   returnDate.value = null;
   store.setSelectedDate(next);
+  void router.push(routeLocation("day", next));
   nextTick(() => dayScroll.value?.scrollTo?.({ top: 0, behavior: "instant" }));
 }
 
@@ -101,34 +152,33 @@ function selectDate(date) {
   statsReference.value = null;
   returnDate.value = null;
   store.setSelectedDate(date);
-  viewMode.value = "day";
+  void router.push(routeLocation("day", date));
 }
 
 function navigateView(mode) {
   priorView.value = viewMode.value;
-  viewMode.value = mode;
-  drawer.value = false;
+  drawer.value = mdAndUp.value;
+  void router.push(routeLocation(mode));
 }
 
 function openWeekStats(date = selectedDate.value) {
   const week = getCampaignWeek(date);
   returnDate.value = selectedDate.value;
   statsReference.value = week.startDate;
-  if (!week.virtualSummary) {
-    pageDirection.value = "page-next";
-    store.setSelectedDate(week.summaryDate);
-    viewMode.value = "day";
-  } else {
-    navigateView("week-stats");
-  }
-  drawer.value = false;
+  drawer.value = mdAndUp.value;
+  void router.push({
+    name: "week-stats",
+    params: { date: week.startDate },
+    query: { from: selectedDate.value },
+  });
 }
 
 function returnFromStats() {
-  if (returnDate.value) store.setSelectedDate(returnDate.value);
-  viewMode.value = "day";
+  const targetDate = returnDate.value ?? selectedDate.value;
+  store.setSelectedDate(targetDate);
   returnDate.value = null;
   statsReference.value = null;
+  void router.push(routeLocation("day", targetDate));
 }
 
 function closeSundayStats() {
@@ -419,6 +469,7 @@ function onTouchEnd(event) {
 
 onMounted(async () => {
   await initializeCampaignStore();
+  applyRouteState();
   if (store.saveError.value) enqueue("本地存储初始化失败，请检查浏览器权限", "error", 4800);
 });
 </script>
@@ -427,14 +478,17 @@ onMounted(async () => {
   <v-app>
     <div
       class="mobile-prototype"
+      :class="{ 'mobile-prototype--desktop': mdAndUp }"
       @touchstart.passive="onTouchStart"
       @touchmove.passive="onTouchMove"
       @touchend.passive="onTouchEnd"
     >
+      <router-view />
       <v-navigation-drawer
         v-model="drawer"
         absolute
-        temporary
+        :permanent="mdAndUp"
+        :temporary="!mdAndUp"
         width="286"
         class="tool-drawer"
       >
@@ -449,13 +503,13 @@ onMounted(async () => {
         </v-list-item>
         <v-divider />
         <v-list nav density="comfortable" class="pt-3">
-          <v-list-item prepend-icon="mdi-calendar-today-outline" title="日视图" @click="navigateView('day')" />
-          <v-list-item prepend-icon="mdi-calendar-week-outline" title="周视图" @click="navigateView('week')" />
-          <v-list-item prepend-icon="mdi-calendar-month-outline" title="月视图" @click="navigateView('month')" />
-          <v-list-item prepend-icon="mdi-chart-timeline-variant" title="本周统计" @click="openCurrentWeekFromDrawer" />
-          <v-list-item prepend-icon="mdi-chart-box-outline" title="总统计" @click="navigateView('total')" />
-          <v-list-item prepend-icon="mdi-heart-multiple-outline" title="赠语收藏" @click="navigateView('favorites')" />
-          <v-list-item prepend-icon="mdi-dice-multiple-outline" title="摸鱼大转盘" @click="navigateView('raffle')" />
+          <v-list-item :active="viewMode === 'day'" prepend-icon="mdi-calendar-today-outline" title="日视图" @click="navigateView('day')" />
+          <v-list-item :active="viewMode === 'week'" prepend-icon="mdi-calendar-week-outline" title="周视图" @click="navigateView('week')" />
+          <v-list-item :active="viewMode === 'month'" prepend-icon="mdi-calendar-month-outline" title="月视图" @click="navigateView('month')" />
+          <v-list-item :active="viewMode === 'week-stats'" prepend-icon="mdi-chart-timeline-variant" title="本周统计" @click="openCurrentWeekFromDrawer" />
+          <v-list-item :active="viewMode === 'total'" prepend-icon="mdi-chart-box-outline" title="总统计" @click="navigateView('total')" />
+          <v-list-item :active="viewMode === 'favorites'" prepend-icon="mdi-heart-multiple-outline" title="赠语收藏" @click="navigateView('favorites')" />
+          <v-list-item :active="viewMode === 'raffle'" prepend-icon="mdi-dice-multiple-outline" title="摸鱼大转盘" @click="navigateView('raffle')" />
         </v-list>
         <template #append>
           <v-list-item
@@ -468,7 +522,7 @@ onMounted(async () => {
       </v-navigation-drawer>
 
       <v-btn
-        v-if="viewMode !== 'day'"
+        v-if="viewMode !== 'day' && !mdAndUp"
         class="alternate-menu"
         icon="mdi-menu"
         variant="text"
@@ -627,7 +681,10 @@ onMounted(async () => {
       <v-snackbar-queue
         v-model="snackbarQueue"
         closable
+        collapsed
+        display-strategy="overflow"
         location="bottom center"
+        :total-visible="5"
       />
     </div>
 
@@ -729,6 +786,35 @@ onMounted(async () => {
   .day-body {
     max-width: 332px;
     padding-inline: 14px;
+  }
+}
+
+@media (min-width: 960px) {
+  .day-stage,
+  .view-stage {
+    left: 286px;
+    width: calc(100% - 286px);
+  }
+
+  .day-page {
+    display: grid;
+    grid-template-columns: minmax(340px, 0.9fr) minmax(480px, 1.2fr);
+    align-items: start;
+  }
+
+  .day-body {
+    width: 100%;
+    max-width: 680px;
+    padding: 72px 48px 56px;
+  }
+
+  .week-jump-wrap {
+    margin-top: 0;
+    margin-bottom: 8px;
+  }
+
+  .tool-drawer {
+    box-shadow: 12px 0 38px rgba(49, 36, 50, 0.05) !important;
   }
 }
 </style>

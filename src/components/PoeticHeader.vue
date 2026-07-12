@@ -189,4 +189,47 @@ defineEmits(["menu", "copy", "toggle-like"]);
     max-width: 276px;
   }
 }
+
+@media (min-width: 960px) {
+  .poetic-header {
+    position: sticky;
+    top: 0;
+    min-height: 100%;
+    height: 100dvh;
+    padding: 54px 46px 42px;
+    border-right: 1px solid rgba(var(--v-theme-outline), 0.2);
+  }
+
+  .menu-trigger {
+    display: none;
+  }
+
+  .date-lockup {
+    min-height: 176px;
+    padding-right: 8px;
+  }
+
+  .date-numeral {
+    font-size: clamp(132px, 11vw, 166px);
+  }
+
+  .date-divider {
+    height: 164px;
+  }
+
+  .date-meta {
+    padding-top: 12px;
+    font-size: 13px;
+  }
+
+  .blessing-wrap {
+    max-width: 430px;
+    margin-top: 70px;
+  }
+
+  .blessing-text {
+    font-size: clamp(20px, 1.9vw, 26px);
+    line-height: 2;
+  }
+}
 </style>

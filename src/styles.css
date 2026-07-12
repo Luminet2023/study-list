@@ -139,6 +139,74 @@ body {
   }
 }
 
+@media (min-width: 960px) {
+  #app,
+  .v-application {
+    display: grid;
+    place-items: center;
+  }
+
+  .mobile-prototype {
+    width: 100vw;
+    height: 100dvh;
+    border: 0;
+    border-radius: 0;
+    box-shadow: none;
+  }
+
+  .mobile-prototype--desktop .view-stage > section {
+    max-width: 980px;
+    margin-inline: auto;
+  }
+
+  .mobile-prototype--desktop .week-overview,
+  .mobile-prototype--desktop .month-overview,
+  .mobile-prototype--desktop .week-stats-view,
+  .mobile-prototype--desktop .total-stats-view,
+  .mobile-prototype--desktop .favorites-view {
+    padding: 28px 48px 48px;
+  }
+
+  .mobile-prototype--desktop .week-line {
+    max-width: 780px;
+    margin-inline: auto;
+  }
+
+  .mobile-prototype--desktop .paper-calendar {
+    max-width: 720px;
+  }
+
+  .mobile-prototype--desktop .favorites-list {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 14px;
+  }
+
+  .mobile-prototype--desktop .favorites-list > .v-list-item {
+    align-self: stretch;
+    padding-bottom: 0 !important;
+  }
+
+  .mobile-prototype--desktop .favorites-list .quote-card {
+    height: 100%;
+  }
+
+  .mobile-prototype--desktop .raffle-content {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    align-items: start;
+    max-width: 880px;
+    padding: 32px 40px 48px;
+  }
+
+  .mobile-prototype--desktop .raffle-content > section:first-child {
+    grid-row: span 2;
+  }
+
+  .mobile-prototype--desktop .raffle-stage {
+    min-height: 460px;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,

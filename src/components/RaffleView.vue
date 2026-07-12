@@ -336,7 +336,11 @@ function confirmPaperClaim() {
   min-height: 0;
   overflow-y: auto;
   color: rgb(var(--v-theme-on-surface));
-  background: rgb(var(--v-theme-background));
+  background-color: rgb(var(--v-theme-background));
+  background-image: url("/assets/raffle-wash-bg.png");
+  background-position: right center;
+  background-repeat: no-repeat;
+  background-size: auto 100%;
   overscroll-behavior-y: contain;
 }
 
@@ -485,6 +489,13 @@ function confirmPaperClaim() {
 
   .paper-summary {
     padding-inline: 10px;
+  }
+}
+
+@media (min-width: 960px) {
+  .raffle-view {
+    background-position: center;
+    background-size: cover;
   }
 }
 </style>

@@ -3,16 +3,18 @@ import "vuetify/styles";
 
 import { createVuetify } from "vuetify";
 import { md3 } from "vuetify/blueprints";
-import { Touch } from "vuetify/directives";
+import { VSnackbarQueue } from "vuetify/components/VSnackbarQueue";
 import {
   VStepperVertical,
   VStepperVerticalActions,
   VStepperVerticalItem,
-} from "vuetify/labs/VStepperVertical";
+} from "vuetify/components/VStepperVertical";
+import { Touch } from "vuetify/directives";
 
 export const vuetify = createVuetify({
   blueprint: md3,
   components: {
+    VSnackbarQueue,
     VStepperVertical,
     VStepperVerticalActions,
     VStepperVerticalItem,
@@ -41,10 +43,10 @@ export const vuetify = createVuetify({
     },
   },
   defaults: {
-    VBtn: {
-      elevation: 0,
-      rounded: "sm",
-    },
+    // VBtn: {
+    //   elevation: 0,
+    //   rounded: "sm",
+    // },
     VCard: {
       elevation: 0,
       rounded: "lg",
