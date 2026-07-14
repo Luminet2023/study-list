@@ -187,10 +187,12 @@ test("minimal mode is a local-only preference and does not change cloud records"
   const state = createDefaultState();
   state.preferences = {
     fontFamily: "lxgw-wenka",
-    minimalMode: false,
+    minimalMode: true,
+    minimalModeOptOut: false,
   };
   const before = stateToRecords(state);
-  state.preferences.minimalMode = true;
+  state.preferences.minimalMode = false;
+  state.preferences.minimalModeOptOut = true;
   const after = stateToRecords(state);
 
   assert.deepEqual(diffRecords(before, after), []);

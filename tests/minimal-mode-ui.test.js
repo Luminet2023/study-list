@@ -32,11 +32,31 @@ test("minimal mode hides statistics and cloud surfaces without gating sync start
   assert.match(editor, /<v-tooltip\s+v-if="!minimalMode"/u);
 });
 
+test("minimal mode hides the drawer brand and its divider", async () => {
+  const app = await readSource("../src/App.vue");
+
+  assert.match(app, /<v-list-item v-if="!minimalMode" class="drawer-brand py-5"/u);
+  assert.match(app, /<v-divider v-if="!minimalMode" \/>/u);
+});
+
 test("minimal mode removes the journal status chip", async () => {
   const workday = await readSource("../src/components/WorkdayView.vue");
 
   assert.match(workday, /<v-chip\s+v-if="!minimalMode"/u);
   assert.doesNotMatch(workday, /极简模式，可随时书写/u);
+});
+
+test("minimal mode removes the goal lock gate while keeping tasks editable", async () => {
+  const [store, workday] = await Promise.all([
+    readSource("../src/composables/useCampaignStore.js"),
+    readSource("../src/components/WorkdayView.vue"),
+  ]);
+
+  assert.match(store, /minimalMode: true,[\s\S]+?minimalModeOptOut: false/u);
+  assert.match(store, /const minimalMode = !minimalModeOptOut/u);
+  assert.match(workday, /<v-fade-transition v-if="!minimalMode" mode="out-in">/u);
+  assert.match(workday, /:readonly="goalsLocked && !minimalMode"/u);
+  assert.match(workday, /:disabled="\(!minimalMode && !goalsLocked\)/u);
 });
 
 test("minimal mode hides the favorites copy hint only through its prop", async () => {

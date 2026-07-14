@@ -550,7 +550,8 @@ const goalPreviewItems = computed(() =>
 );
 
 function requestGoalLockForDate(date) {
-  if (!minimalMode.value && !areWorkdayGoalInputsComplete(store.state.days?.[date])) {
+  if (minimalMode.value) return;
+  if (!areWorkdayGoalInputsComplete(store.state.days?.[date])) {
     enqueue("请先填写第 4、7 项留白；第 6 项可以留空", "outline");
     return;
   }
@@ -595,9 +596,10 @@ function cycleDate(date, slotOrId) {
   if (!store.cycleStatus(date, slot)) {
     enqueue(
       day?.type === DAY_TYPE.WORKDAY
+        && !minimalMode.value
         && !(Boolean(day?.goalsLocked)
-          && (minimalMode.value || areWorkdayGoalInputsComplete(day)))
-        ? (minimalMode.value ? "请先锁定今日目标" : "请先填写并锁定今日目标")
+          && areWorkdayGoalInputsComplete(day))
+        ? "请先填写并锁定今日目标"
         : "该项已由转盘免除，并按完成统计",
       "secondary",
     );
@@ -1116,7 +1118,7 @@ onMounted(async () => {
         width="286"
         class="tool-drawer"
       >
-        <v-list-item class="drawer-brand py-5" lines="three">
+        <v-list-item v-if="!minimalMode" class="drawer-brand py-5" lines="three">
           <template #prepend>
             <v-avatar color="secondary" variant="tonal">
               <v-icon icon="mdi-fountain-pen-tip" />
@@ -1125,7 +1127,7 @@ onMounted(async () => {
           <v-list-item-title>暁夕の箋</v-list-item-title>
           <v-list-item-subtitle>日々を光とし</v-list-item-subtitle>
         </v-list-item>
-        <v-divider />
+        <v-divider v-if="!minimalMode" />
         <v-list nav density="comfortable" class="pt-3">
           <v-list-item :active="viewMode === 'day'" prepend-icon="mdi-calendar-today-outline" title="日视图" @click="navigateView('day')" />
           <v-list-item :active="viewMode === 'week'" prepend-icon="mdi-calendar-week-outline" title="周视图" @click="navigateView('week')" />
@@ -1654,7 +1656,7 @@ onMounted(async () => {
               prepend-icon="mdi-lock-check-outline"
               title="填写并锁定目标"
               :subtitle="minimalMode
-                ? '极简模式下目标留白时也可锁定；锁定后即可逐项勾选。'
+                ? '极简模式下无需锁定目标，可直接逐项勾选。'
                 : '工作日先填写第 4、7 项；第 6 项可留空。核对锁定后，已计划项目才可逐项勾选。'"
             />
             <v-list-item

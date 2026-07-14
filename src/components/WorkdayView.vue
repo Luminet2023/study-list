@@ -121,7 +121,7 @@ const stateLabel = (item) => {
   if (item.isPlanned === false) {
     return `第 ${item.slot} 项：留空，未列入今日计划`;
   }
-  if (!props.goalsLocked) {
+  if (!props.minimalMode && !props.goalsLocked) {
     return `第 ${item.slot} 项：目标尚未锁定，暂不可勾选`;
   }
   const labels = {
@@ -180,7 +180,7 @@ const saveJournal = (value) => {
               :icon="stateIcon(item)"
               :color="stateColor(item)"
               :aria-label="stateLabel(item)"
-              :disabled="!goalsLocked || item.isExempt || item.isPlanned === false"
+              :disabled="(!minimalMode && !goalsLocked) || item.isExempt || item.isPlanned === false"
               size="44"
               variant="text"
               rounded="circle"
@@ -209,7 +209,7 @@ const saveJournal = (value) => {
                   :model-value="item.editableValue"
                   :aria-label="`第 ${item.slot} 项补充内容`"
                   :placeholder="Number(item.slot) === 6 ? '可留空，不计入今日计划' : undefined"
-                  :readonly="goalsLocked"
+                  :readonly="goalsLocked && !minimalMode"
                   density="compact"
                   hide-details
                   single-line
@@ -231,7 +231,7 @@ const saveJournal = (value) => {
         </v-stepper-vertical-item>
       </v-stepper-vertical>
 
-      <v-fade-transition mode="out-in">
+      <v-fade-transition v-if="!minimalMode" mode="out-in">
         <div :key="goalsLocked ? 'locked' : goalsReady ? 'ready' : 'draft'" class="goal-gate px-4 mt-3">
           <v-alert
             v-if="!goalsReady && !minimalMode"

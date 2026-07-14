@@ -409,21 +409,12 @@ export function areWorkdayGoalInputsComplete(day) {
   });
 }
 
-/**
- * 锁定后的输入由 store/UI 共同保护为只读；极简模式可显式允许留白目标。
- * @param {CampaignDay} day
- * @param {string} lockedAt
- * @param {{allowIncomplete?: boolean}} [options]
- */
-export function lockWorkdayGoals(
-  day,
-  lockedAt = new Date().toISOString(),
-  options = {},
-) {
+/** 锁定后的输入由 store/UI 共同保护为只读。 */
+export function lockWorkdayGoals(day, lockedAt = new Date().toISOString()) {
   if (!day || day.type !== DAY_TYPE.WORKDAY) {
     throw new TypeError("day is not a workday");
   }
-  if (!options.allowIncomplete && !areWorkdayGoalInputsComplete(day)) {
+  if (!areWorkdayGoalInputsComplete(day)) {
     throw new Error("workday goal inputs are incomplete");
   }
   if (day.goalsLocked) return day;

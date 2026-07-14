@@ -73,7 +73,8 @@ function defaultState(baselineId = createBaselineId()) {
       fontFamily: "lxgw-wenka",
       quoteSource: "native",
       hitokotoCategories: [],
-      minimalMode: false,
+      minimalMode: true,
+      minimalModeOptOut: false,
     },
     raffle: {
       ...base.raffle,
@@ -113,13 +114,15 @@ function normalizeState(input) {
   const base = defaultState();
   const incoming = input && typeof input === "object" ? input : {};
   const incomingPreferences = { ...(incoming.preferences ?? {}) };
+  const minimalModeOptOut = incomingPreferences.minimalModeOptOut === true;
+  const minimalMode = !minimalModeOptOut;
   // `dayPageTransition` was a browser-only preference. Day pages now always
   // use StPageFlip, so discard stale IndexedDB snapshots that still carry it.
   delete incomingPreferences.dayPageTransition;
   const days = Object.fromEntries(
     Object.entries(base.days).map(([date, day]) => [
       date,
-      mergeDay(day, incoming.days?.[date], incomingPreferences.minimalMode === true),
+      mergeDay(day, incoming.days?.[date], minimalMode),
     ]),
   );
   return {
@@ -136,7 +139,8 @@ function normalizeState(input) {
       ...incomingPreferences,
       quoteSource: normalizeQuoteSource(incoming.preferences?.quoteSource),
       hitokotoCategories: normalizeHitokotoCategories(incoming.preferences?.hitokotoCategories),
-      minimalMode: incoming.preferences?.minimalMode === true,
+      minimalMode,
+      minimalModeOptOut,
     },
     raffle: {
       ...base.raffle,
@@ -178,6 +182,7 @@ function notifyChangeListeners() {
 function replaceState(nextState, { preserveMinimalMode = false } = {}) {
   const selectedDate = state.preferences?.selectedDate;
   const minimalMode = state.preferences?.minimalMode === true;
+  const minimalModeOptOut = state.preferences?.minimalModeOptOut === true;
   suppressPersistence = true;
   const normalizationInput = preserveMinimalMode
     ? {
@@ -185,12 +190,16 @@ function replaceState(nextState, { preserveMinimalMode = false } = {}) {
         preferences: {
           ...(nextState?.preferences ?? {}),
           minimalMode,
+          minimalModeOptOut,
         },
       }
     : nextState;
   const normalized = normalizeState(normalizationInput);
   if (selectedDate) normalized.preferences.selectedDate = clampCampaignDate(selectedDate);
-  if (preserveMinimalMode) normalized.preferences.minimalMode = minimalMode;
+  if (preserveMinimalMode) {
+    normalized.preferences.minimalMode = minimalMode;
+    normalized.preferences.minimalModeOptOut = minimalModeOptOut;
+  }
   for (const key of Object.keys(state)) delete state[key];
   Object.assign(state, normalized);
   suppressPersistence = false;
@@ -294,6 +303,7 @@ watch(
     quoteSource: state.preferences?.quoteSource,
     hitokotoCategories: state.preferences?.hitokotoCategories,
     minimalMode: state.preferences?.minimalMode,
+    minimalModeOptOut: state.preferences?.minimalModeOptOut,
     raffle: state.raffle,
   }),
   schedulePersistence,
@@ -307,8 +317,12 @@ async function reloadFromStorage() {
     loaded.preferences ?? {},
     "dayPageTransition",
   );
+  const minimalModeOptOutWasMissing = !Object.hasOwn(
+    loaded.preferences ?? {},
+    "minimalModeOptOut",
+  );
   replaceState(loaded);
-  return baselineWasMissing || legacyTransitionWasStored;
+  return baselineWasMissing || legacyTransitionWasStored || minimalModeOptOutWasMissing;
 }
 
 export async function initializeCampaignStore() {
@@ -358,6 +372,7 @@ function createCleanSyncState(baselineId) {
   const clean = defaultState(baselineId);
   clean.preferences.selectedDate = state.preferences?.selectedDate ?? clean.preferences.selectedDate;
   clean.preferences.minimalMode = state.preferences?.minimalMode === true;
+  clean.preferences.minimalModeOptOut = state.preferences?.minimalModeOptOut === true;
   return normalizeState(clean);
 }
 
@@ -404,8 +419,13 @@ function isMinimalModeEnabled() {
 
 function setMinimalMode(enabled) {
   const next = enabled === true;
-  if (state.preferences.minimalMode === next) return;
+  const nextOptOut = !next;
+  if (
+    state.preferences.minimalMode === next
+    && state.preferences.minimalModeOptOut === nextOptOut
+  ) return;
   state.preferences.minimalMode = next;
+  state.preferences.minimalModeOptOut = nextOptOut;
   if (next) return;
 
   for (const [date, day] of Object.entries(state.days ?? {})) {
@@ -434,7 +454,8 @@ function cycleStatus(date, slot) {
   if (!day || !item) return false;
   if (
     day.type === DAY_TYPE.WORKDAY &&
-    (!day.goalsLocked || (!isMinimalModeEnabled() && !areWorkdayGoalInputsComplete(day)))
+    !isMinimalModeEnabled() &&
+    (!day.goalsLocked || !areWorkdayGoalInputsComplete(day))
   ) {
     return false;
   }
@@ -446,12 +467,13 @@ function cycleStatus(date, slot) {
 
 function updateItem(date, slot, value) {
   const day = getDay(date);
+  const minimalMode = isMinimalModeEnabled();
   const lockIsValid =
     day?.type !== DAY_TYPE.WORKDAY ||
     (day.goalsLocked && (isMinimalModeEnabled() || areWorkdayGoalInputsComplete(day)));
   if (
     !day ||
-    (day.type === DAY_TYPE.WORKDAY && lockIsValid)
+    (day.type === DAY_TYPE.WORKDAY && !minimalMode && lockIsValid)
   ) {
     return false;
   }
@@ -505,13 +527,8 @@ function updateJournalDraft(date, value) {
 function lockGoals(date) {
   const day = getDay(date);
   if (!day || day.type !== DAY_TYPE.WORKDAY) return false;
-  const allowIncomplete = isMinimalModeEnabled();
-  if (!allowIncomplete && !areWorkdayGoalInputsComplete(day)) return false;
-  state.days[date] = lockWorkdayGoals(
-    day,
-    new Date().toISOString(),
-    { allowIncomplete },
-  );
+  if (isMinimalModeEnabled() || !areWorkdayGoalInputsComplete(day)) return false;
+  state.days[date] = lockWorkdayGoals(day, new Date().toISOString());
   return true;
 }
 

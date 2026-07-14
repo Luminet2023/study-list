@@ -96,7 +96,7 @@ function updateMinimalMode(enabled) {
         <v-card class="minimal-mode-option" color="primary" variant="tonal">
           <v-card-item>
             <v-card-title>极简模式已开启</v-card-title>
-            <v-card-subtitle>日记可随时书写，目标留白时也能锁定。</v-card-subtitle>
+            <v-card-subtitle>日记可随时书写，目标无需锁定即可勾选。</v-card-subtitle>
             <template #append>
               <v-switch
                 :model-value="minimalMode"

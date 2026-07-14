@@ -39,6 +39,24 @@ test("legacy page transition preferences are discarded", async () => {
   ), false);
 });
 
+test("minimal mode is enabled by default until the user explicitly opts out", () => {
+  const originalWarn = console.warn;
+  console.warn = () => {};
+  const store = useCampaignStore();
+  console.warn = originalWarn;
+
+  assert.equal(store.mutableState.preferences.minimalMode, true);
+  assert.equal(store.mutableState.preferences.minimalModeOptOut, false);
+
+  store.setMinimalMode(false);
+  assert.equal(store.mutableState.preferences.minimalMode, false);
+  assert.equal(store.mutableState.preferences.minimalModeOptOut, true);
+
+  store.setMinimalMode(true);
+  assert.equal(store.mutableState.preferences.minimalMode, true);
+  assert.equal(store.mutableState.preferences.minimalModeOptOut, false);
+});
+
 test("minimal mode relaxes journal and goal gates without weakening normal mode", () => {
   const originalWarn = console.warn;
   console.warn = () => {};
@@ -55,28 +73,34 @@ test("minimal mode relaxes journal and goal gates without weakening normal mode"
   store.setMinimalMode(true);
   assert.equal(store.updateJournal(CAMPAIGN_START, "极简模式日记"), true);
   assert.equal(store.updateJournalDraft(CAMPAIGN_START, "极简模式草稿"), true);
-  assert.equal(store.lockGoals(CAMPAIGN_START), true);
+  assert.equal(store.lockGoals(CAMPAIGN_START), false);
   assert.equal(store.cycleStatus(CAMPAIGN_START, 1), true);
-  assert.equal(store.mutableState.days[CAMPAIGN_START].goalsLocked, true);
+  assert.equal(store.updateItem(CAMPAIGN_START, 4, "无需锁定仍可编辑"), true);
+  assert.equal(store.mutableState.days[CAMPAIGN_START].goalsLocked, false);
 
+  store.mutableState.days[CAMPAIGN_START].goalsLocked = true;
+  store.mutableState.days[CAMPAIGN_START].goalsLockedAt = "2026-07-13T08:00:00.000Z";
   store.setMinimalMode(false);
   assert.equal(store.mutableState.days[CAMPAIGN_START].goalsLocked, false);
   assert.equal(store.mutableState.days[CAMPAIGN_START].goalsLockedAt, null);
 });
 
-test("minimal mode remains local when a synchronized snapshot replaces state", async () => {
+test("the manual minimal mode opt-out remains local when sync replaces state", async () => {
   const originalWarn = console.warn;
   console.warn = () => {};
   const store = useCampaignStore();
   console.warn = originalWarn;
 
-  store.setMinimalMode(true);
+  store.setMinimalMode(false);
   const incoming = JSON.parse(JSON.stringify(store.mutableState));
-  incoming.preferences.minimalMode = false;
+  incoming.preferences.minimalMode = true;
+  incoming.preferences.minimalModeOptOut = false;
 
   await store.replaceFromSync(incoming);
 
-  assert.equal(store.mutableState.preferences.minimalMode, true);
-  assert.equal(store.createCleanSyncState().preferences.minimalMode, true);
-  store.setMinimalMode(false);
+  assert.equal(store.mutableState.preferences.minimalMode, false);
+  assert.equal(store.mutableState.preferences.minimalModeOptOut, true);
+  assert.equal(store.createCleanSyncState().preferences.minimalMode, false);
+  assert.equal(store.createCleanSyncState().preferences.minimalModeOptOut, true);
+  store.setMinimalMode(true);
 });
