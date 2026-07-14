@@ -7,8 +7,6 @@ import {
 } from "../persistence/indexedDb.js";
 import {
   BASELINE_CHOICE,
-  base64ToBytes,
-  bytesToBase64,
   decodeResolveBaselineResponse,
   decodeJsonValue,
   decodeSyncResponse,
@@ -27,6 +25,7 @@ import {
   stateToRecords,
 } from "./stateRecords.js";
 import { isPageActive } from "../lib/pageActivity.js";
+import { createSyncWebSocketTransport } from "./webSocketTransport.js";
 
 const syncing = ref(false);
 const syncError = ref(null);
@@ -34,23 +33,23 @@ const lastSyncedAt = ref(null);
 const conflictCount = ref(0);
 const baselineConflict = ref(null);
 const resolvingBaseline = ref(false);
+const connectionState = ref("stopped");
 const CLOUD_SYNC_INTERVAL_MS = 5_000;
-const CLOUD_PULL_INTERVAL_MS = 10_000;
 let store;
 let syncState;
 let activePromise;
 let syncTimer;
 let syncTimerDue = 0;
 let syncPending = false;
-let pullTimer;
-let pullTimerDue = 0;
 let pullPending = false;
 let lastSyncStartedAt = 0;
-let lastExchangeAt = 0;
 let unsubscribeChanges;
 let ownerId;
 let observedSyncRecords;
-let activeRequestController;
+let transport;
+let retryTimer;
+let authRequiredHandler;
+let pendingResolutionRequest;
 
 function clone(value) {
   return JSON.parse(JSON.stringify(value));
@@ -80,48 +79,16 @@ function assertPageActive() {
   throw error;
 }
 
-async function postProtobuf(path, protobuf) {
+async function sendProtobuf(type, protobuf, options) {
   assertPageActive();
-  const controller = new AbortController();
-  activeRequestController = controller;
-  try {
-    const response = await fetch(path, {
-      method: "POST",
-      credentials: "same-origin",
-      headers: { "content-type": "application/json", accept: "application/json" },
-      body: JSON.stringify({ protobuf: bytesToBase64(protobuf) }),
-      signal: controller.signal,
-    });
-    if (!isPageActive()) {
-      const error = new Error("页面未聚焦，云同步已暂停");
-      error.code = "SYNC_PAUSED";
-      throw error;
-    }
-    if (response.status === 401) {
-      const error = new Error("登录已失效");
-      error.code = "AUTH_REQUIRED";
-      throw error;
-    }
-    if (response.status === 429) {
-      const error = new Error("云同步请求过于频繁");
-      error.code = "RATE_LIMITED";
-      error.retryAfterMs = Math.max(Number(response.headers.get("retry-after") ?? 10) * 1000, 1000);
-      throw error;
-    }
-    if (!response.ok) throw new Error(`同步接口返回 ${response.status}`);
-    const envelope = await response.json();
-    if (path === "/api/v1/sync/exchange") lastExchangeAt = Date.now();
-    return base64ToBytes(envelope.protobuf);
-  } catch (error) {
-    if (controller.signal.aborted) {
-      const paused = new Error("页面未聚焦，云同步已暂停");
-      paused.code = "SYNC_PAUSED";
-      throw paused;
-    }
+  if (!transport?.isOpen()) {
+    const error = new Error("云同步连接尚未建立");
+    error.code = "CONNECTION_LOST";
     throw error;
-  } finally {
-    if (activeRequestController === controller) activeRequestController = undefined;
   }
+  const result = await transport.request(type, protobuf, options);
+  assertPageActive();
+  return result;
 }
 
 function localProgressSummary() {
@@ -159,7 +126,7 @@ async function exchange(mutations, cursor) {
     localUpdatedAtMs: summary.updatedAtMs,
     localProgressDay: summary.progressDay,
   });
-  const response = decodeSyncResponse(await postProtobuf("/api/v1/sync/exchange", protobuf));
+  const response = decodeSyncResponse(await sendProtobuf("exchange", protobuf));
   if (response.baselineMismatch) {
     setBaselineConflict(response);
     const error = new Error("本地与云端基线不一致");
@@ -188,9 +155,9 @@ function applyChangesToBaseline(changes) {
   syncState.meta.baseline = recordsToSerializable(baseline);
 }
 
-function reconcileOutbox() {
+function reconcileOutbox(currentState = store.mutableState) {
   const baseline = serializableToRecords(syncState.meta.baseline);
-  const current = stateToRecords(store.mutableState);
+  const current = stateToRecords(currentState);
   const differences = diffRecords(baseline, current);
   const prior = new Map(syncState.outbox.map((mutation) => [mutation.entityKey, mutation]));
   const next = [];
@@ -247,6 +214,64 @@ async function bootstrapFromServer() {
   return true;
 }
 
+function recordsMatchAtKey(left, right, entityKey) {
+  if (left.has(entityKey) !== right.has(entityKey)) return false;
+  return !left.has(entityKey) || recordValuesEqual(left.get(entityKey), right.get(entityKey));
+}
+
+export function selectResetLocalOverlay(
+  previousBaseline,
+  liveRecords,
+  sentRecords,
+  rejectedEntityKeys,
+) {
+  return diffRecords(previousBaseline, liveRecords).filter((change) => (
+    !rejectedEntityKeys.has(change.entityKey) ||
+    !recordsMatchAtKey(liveRecords, sentRecords, change.entityKey)
+  ));
+}
+
+async function rebuildRemoteBaseline({ sentRecords, rejectedEntityKeys }) {
+  const previousBaseline = serializableToRecords(syncState.meta.baseline);
+  const liveRecords = stateToRecords(store.mutableState);
+  const localOverlay = selectResetLocalOverlay(
+    previousBaseline,
+    liveRecords,
+    sentRecords,
+    rejectedEntityKeys,
+  );
+  const rebuiltState = store.createCleanSyncState(store.mutableState.baselineId);
+  syncState.meta.cursor = 0;
+  syncState.meta.baseline = {};
+  syncState.meta.recordVersions = {};
+  syncState.meta.bootstrapDone = false;
+  let cursor = 0;
+  let response;
+  do {
+    response = await exchange([], cursor);
+    if (response.resetRequired && cursor === 0) {
+      const error = new Error("云端同步游标无法重建");
+      error.code = "FAILED_PRECONDITION";
+      throw error;
+    }
+    applyWireChanges(rebuiltState, response.changes);
+    applyChangesToBaseline(response.changes);
+    updateRecordVersions(response.changes);
+    cursor = response.nextCursor;
+  } while (response.hasMore);
+  syncState.meta.cursor = cursor;
+  syncState.meta.bootstrapDone = true;
+  for (const localChange of localOverlay) {
+    applyRecordValue(
+      rebuiltState,
+      localChange.entityKey,
+      localChange.deleted ? undefined : localChange.value,
+    );
+  }
+  rebuiltState.preferences.selectedDate = store.mutableState.preferences?.selectedDate;
+  return rebuiltState;
+}
+
 async function performSync({ allowEmptyPull = false } = {}) {
   if (!store || !isPageActive() || baselineConflict.value || globalThis.navigator?.onLine === false) return;
   syncing.value = true;
@@ -282,11 +307,33 @@ async function performSync({ allowEmptyPull = false } = {}) {
       // 只展示本轮中被服务端版本覆盖的过期写入；客户端正常覆盖服务端不算冲突。
       mergedConflictCount += response.acks.filter((ack) => ack.conflict && !ack.applied).length;
 
+      if (response.resetRequired) {
+        const sentByOpId = new Map(sentOutbox.map((mutation) => [mutation.opId, mutation]));
+        const rejectedEntityKeys = new Set(
+          response.acks
+            .filter((ack) => !ack.applied)
+            .map((ack) => sentByOpId.get(ack.opId)?.entityKey)
+            .filter(Boolean),
+        );
+        const rebuiltState = await rebuildRemoteBaseline({ sentRecords, rejectedEntityKeys });
+        reconcileOutbox(rebuiltState);
+        assertPageActive();
+        const persisted = await replaceCampaignAndCloudSyncState(
+          ownerId,
+          rebuiltState,
+          syncState.meta,
+          syncState.outbox,
+        );
+        store.replaceFromPersistedSync(persisted.state);
+        observedSyncRecords = stateToRecords(store.mutableState);
+        continue;
+      }
+
       const serverState = clone(sentState);
       applyWireChanges(serverState, response.changes);
       applyChangesToBaseline(response.changes);
       updateRecordVersions(response.changes);
-      syncState.meta.cursor = response.resetRequired ? 0 : response.nextCursor;
+      syncState.meta.cursor = response.nextCursor;
 
       // 网络往返期间产生的本地编辑重新叠加，留给下一轮作为新 mutation 上传。
       const liveRecords = stateToRecords(store.mutableState);
@@ -295,7 +342,7 @@ async function performSync({ allowEmptyPull = false } = {}) {
       }
       serverState.preferences.selectedDate = store.mutableState.preferences?.selectedDate;
       const serverRecords = stateToRecords(serverState);
-      if (response.acks.length || response.changes.length || response.resetRequired) {
+      if (response.acks.length || response.changes.length) {
         assertPageActive();
         await saveCloudSyncState(ownerId, syncState.meta, syncState.outbox);
       }
@@ -312,7 +359,13 @@ async function performSync({ allowEmptyPull = false } = {}) {
     assertPageActive();
     await saveCloudSyncState(ownerId, syncState.meta, syncState.outbox);
   } catch (error) {
-    syncError.value = ["RATE_LIMITED", "BASELINE_MISMATCH", "SYNC_PAUSED"].includes(error.code)
+    syncError.value = [
+      "RATE_LIMITED",
+      "BASELINE_MISMATCH",
+      "SYNC_PAUSED",
+      "CONNECTION_LOST",
+      "AUTH_REQUIRED",
+    ].includes(error.code)
       ? null
       : error;
     throw error;
@@ -328,27 +381,54 @@ function clearSyncTimer() {
   syncTimerDue = 0;
 }
 
-function clearPullTimer() {
-  if (pullTimer === undefined) return;
-  globalThis.clearTimeout?.(pullTimer);
-  pullTimer = undefined;
-  pullTimerDue = 0;
+function clearRetryTimer() {
+  if (retryTimer === undefined) return;
+  globalThis.clearTimeout?.(retryTimer);
+  retryTimer = undefined;
+}
+
+function scheduleRetry(delayMs) {
+  clearRetryTimer();
+  retryTimer = globalThis.setTimeout?.(() => {
+    retryTimer = undefined;
+    drainPendingSync();
+  }, Math.max(Number(delayMs) || 0, 1000));
+}
+
+function drainPendingSync() {
+  if (
+    !store ||
+    activePromise ||
+    retryTimer !== undefined ||
+    baselineConflict.value ||
+    resolvingBaseline.value ||
+    !isPageActive() ||
+    globalThis.navigator?.onLine === false ||
+    !transport?.isOpen()
+  ) return;
+  if (syncPending) {
+    void scheduleCloudSync({ immediate: true });
+    return;
+  }
+  if (pullPending) {
+    pullPending = false;
+    if (!launchSync({ allowEmptyPull: true, source: "pull" })) pullPending = true;
+  }
 }
 
 function launchSync({ allowEmptyPull = false, source = "change" } = {}) {
-  if (!store || activePromise) return false;
+  if (!store || activePromise || !transport?.isOpen()) return false;
   lastSyncStartedAt = Date.now();
   activePromise = performSync({ allowEmptyPull })
     .catch((error) => {
-      if (!["RATE_LIMITED", "SYNC_PAUSED"].includes(error.code)) return;
+      if (!["RATE_LIMITED", "SYNC_PAUSED", "CONNECTION_LOST"].includes(error.code)) return;
       if (source === "pull") pullPending = true;
       else syncPending = true;
+      if (error.code === "RATE_LIMITED") scheduleRetry(error.retryAfterMs);
     })
     .finally(() => {
       activePromise = null;
-      if (!store) return;
-      if (syncPending) scheduleCloudSync({ immediate: true });
-      scheduleCloudPull();
+      drainPendingSync();
     });
   return true;
 }
@@ -356,7 +436,7 @@ function launchSync({ allowEmptyPull = false, source = "change" } = {}) {
 function runScheduledSync() {
   clearSyncTimer();
   if (!store || activePromise) return;
-  if (!isPageActive()) {
+  if (!isPageActive() || globalThis.navigator?.onLine === false || !transport?.isOpen()) {
     syncPending = true;
     return;
   }
@@ -367,7 +447,12 @@ function runScheduledSync() {
 function scheduleCloudSync({ immediate = false } = {}) {
   if (!store || baselineConflict.value || resolvingBaseline.value) return Promise.resolve();
   syncPending = true;
-  if (!isPageActive()) {
+  if (
+    !isPageActive() ||
+    globalThis.navigator?.onLine === false ||
+    !transport?.isOpen() ||
+    retryTimer !== undefined
+  ) {
     clearSyncTimer();
     return Promise.resolve();
   }
@@ -387,30 +472,9 @@ export function queueCloudSync() {
   return scheduleCloudSync({ immediate: true });
 }
 
-function runScheduledPull() {
-  clearPullTimer();
-  if (!store || baselineConflict.value || resolvingBaseline.value) return;
-  if (!isPageActive() || globalThis.navigator?.onLine === false) {
-    pullPending = true;
-    return;
-  }
-  pullPending = false;
-  if (!launchSync({ allowEmptyPull: true, source: "pull" })) pullPending = true;
-}
-
-function scheduleCloudPull({ immediate = false } = {}) {
-  if (!store || baselineConflict.value || resolvingBaseline.value) return;
+function queueCloudPull() {
   pullPending = true;
-  if (!isPageActive() || globalThis.navigator?.onLine === false || activePromise) {
-    clearPullTimer();
-    return;
-  }
-  const now = Date.now();
-  const dueAt = immediate ? now : Math.max(now, lastExchangeAt + CLOUD_PULL_INTERVAL_MS);
-  if (pullTimer !== undefined && pullTimerDue <= dueAt) return;
-  clearPullTimer();
-  pullTimerDue = dueAt;
-  pullTimer = globalThis.setTimeout?.(runScheduledPull, Math.max(dueAt - now, 0));
+  drainPendingSync();
 }
 
 function scheduleChangedStateSync() {
@@ -425,18 +489,17 @@ function scheduleChangedStateSync() {
 
 function pauseCloudSync() {
   const hadScheduledWork = syncTimer !== undefined || Boolean(activePromise);
-  const hadScheduledPull = pullTimer !== undefined || Boolean(activePromise);
   clearSyncTimer();
-  clearPullTimer();
+  clearRetryTimer();
   if (hadScheduledWork) syncPending = true;
-  if (hadScheduledPull) pullPending = true;
-  activeRequestController?.abort("page_not_focused");
+  if (activePromise) pullPending = true;
+  transport?.pause();
 }
 
 function resumeCloudSync() {
   if (!isPageActive()) return;
-  if (syncPending) void scheduleCloudSync({ immediate: true });
-  scheduleCloudPull();
+  transport?.resume();
+  drainPendingSync();
 }
 
 function onCloudVisibilityChange() {
@@ -444,13 +507,14 @@ function onCloudVisibilityChange() {
   else pauseCloudSync();
 }
 
-export async function startCloudSync(campaignStore, authenticatedOwnerId) {
+export async function startCloudSync(campaignStore, authenticatedOwnerId, options = {}) {
   if (store) {
     if (store === campaignStore && ownerId === String(authenticatedOwnerId)) return;
     stopCloudSync();
   }
   store = campaignStore;
   ownerId = String(authenticatedOwnerId);
+  authRequiredHandler = options.onAuthRequired;
   conflictCount.value = 0;
   baselineConflict.value = null;
   syncError.value = null;
@@ -462,9 +526,41 @@ export async function startCloudSync(campaignStore, authenticatedOwnerId) {
   unsubscribeChanges = store.subscribeToChanges(scheduleChangedStateSync);
   globalThis.document?.addEventListener?.("visibilitychange", onCloudVisibilityChange);
   globalThis.addEventListener?.("online", resumeCloudSync);
+  globalThis.addEventListener?.("offline", pauseCloudSync);
   globalThis.addEventListener?.("focus", resumeCloudSync);
   globalThis.addEventListener?.("blur", pauseCloudSync);
-  queueCloudSync();
+  transport = createSyncWebSocketTransport({
+    isActive: () => Boolean(store && isPageActive() && globalThis.navigator?.onLine !== false),
+    onStateChange: (nextState) => { connectionState.value = nextState; },
+    onOpen: () => {
+      if (pendingResolutionRequest && baselineConflict.value) {
+        void resolveBaseline(pendingResolutionRequest.choice).catch((error) => {
+          if (!["CONNECTION_LOST", "SYNC_PAUSED"].includes(error.code)) syncError.value = error;
+        });
+        return;
+      }
+      syncPending = false;
+      pullPending = false;
+      if (!launchSync({ allowEmptyPull: true, source: "reconnect" })) {
+        syncPending = true;
+      }
+    },
+    onHint: (hint) => {
+      if (!syncState) return;
+      if (
+        hint.baselineId !== store.mutableState.baselineId ||
+        hint.serverCursor > syncState.meta.cursor
+      ) queueCloudPull();
+    },
+    onAuthRequired: (error) => {
+      syncError.value = null;
+      Promise.resolve(authRequiredHandler?.(error)).catch((callbackError) => {
+        syncError.value = callbackError;
+      });
+    },
+    onFatalError: (error) => { syncError.value = error; },
+  });
+  transport.start();
 }
 
 function resolutionSnapshotMutations() {
@@ -502,23 +598,38 @@ async function resolveBaseline(choice) {
   resolvingBaseline.value = true;
   clearSyncTimer();
   try {
-    const summary = localProgressSummary();
-    const request = {
-      requestId: `resolve_${crypto.randomUUID().replaceAll("-", "")}`,
-      deviceId: syncState.meta.deviceId,
-      localBaselineId: conflict.local.baselineId,
-      expectedServerBaselineId: conflict.server.baselineId,
-      expectedServerVersion: conflict.server.version,
+    const requestKey = [
+      conflict.local.baselineId,
+      conflict.server.baselineId,
+      conflict.server.version,
       choice,
-      localSnapshot: choice === BASELINE_CHOICE.USE_LOCAL ? resolutionSnapshotMutations() : [],
-      localVersion: summary.version,
-      localUpdatedAtMs: summary.updatedAtMs,
-      localProgressDay: summary.progressDay,
-    };
+    ].join(":");
+    let request = pendingResolutionRequest?.key === requestKey
+      ? pendingResolutionRequest.request
+      : null;
+    if (!request) {
+      const summary = localProgressSummary();
+      request = {
+        requestId: `resolve_${crypto.randomUUID().replaceAll("-", "")}`,
+        deviceId: syncState.meta.deviceId,
+        localBaselineId: conflict.local.baselineId,
+        expectedServerBaselineId: conflict.server.baselineId,
+        expectedServerVersion: conflict.server.version,
+        choice,
+        localSnapshot: choice === BASELINE_CHOICE.USE_LOCAL ? resolutionSnapshotMutations() : [],
+        localVersion: summary.version,
+        localUpdatedAtMs: summary.updatedAtMs,
+        localProgressDay: summary.progressDay,
+      };
+      pendingResolutionRequest = { key: requestKey, choice, request };
+    }
     const response = decodeResolveBaselineResponse(
-      await postProtobuf("/api/v1/sync/resolve", encodeResolveBaselineRequest(request)),
+      await sendProtobuf("resolve", encodeResolveBaselineRequest(request), {
+        requestId: request.requestId,
+      }),
     );
     if (response.stale) {
+      pendingResolutionRequest = undefined;
       baselineConflict.value = {
         ...conflict,
         server: {
@@ -564,10 +675,11 @@ async function resolveBaseline(choice) {
     baselineConflict.value = null;
     syncError.value = null;
     syncPending = false;
+    pendingResolutionRequest = undefined;
     return true;
   } finally {
     resolvingBaseline.value = false;
-    if (!baselineConflict.value) scheduleCloudPull();
+    if (!baselineConflict.value) queueCloudPull();
   }
 }
 
@@ -581,26 +693,30 @@ export function resolveWithServerProgress() {
 
 export function stopCloudSync() {
   clearSyncTimer();
-  clearPullTimer();
-  activeRequestController?.abort("sync_stopped");
-  activeRequestController = undefined;
+  clearRetryTimer();
+  transport?.stop();
+  transport = undefined;
   syncPending = false;
   pullPending = false;
-  lastExchangeAt = 0;
+  lastSyncStartedAt = 0;
   baselineConflict.value = null;
   resolvingBaseline.value = false;
   syncError.value = null;
   conflictCount.value = 0;
+  connectionState.value = "stopped";
   unsubscribeChanges?.();
   unsubscribeChanges = undefined;
   globalThis.document?.removeEventListener?.("visibilitychange", onCloudVisibilityChange);
   globalThis.removeEventListener?.("online", resumeCloudSync);
+  globalThis.removeEventListener?.("offline", pauseCloudSync);
   globalThis.removeEventListener?.("focus", resumeCloudSync);
   globalThis.removeEventListener?.("blur", pauseCloudSync);
   store = undefined;
   ownerId = undefined;
   syncState = undefined;
   observedSyncRecords = undefined;
+  authRequiredHandler = undefined;
+  pendingResolutionRequest = undefined;
 }
 
 export function useCloudSyncStatus() {
@@ -611,6 +727,7 @@ export function useCloudSyncStatus() {
     conflictCount: readonly(conflictCount),
     baselineConflict: readonly(baselineConflict),
     resolvingBaseline: readonly(resolvingBaseline),
+    connectionState: readonly(connectionState),
     syncNow: queueCloudSync,
     resolveWithLocalProgress,
     resolveWithServerProgress,

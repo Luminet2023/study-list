@@ -165,6 +165,10 @@ const cloudSyncTitle = computed(() => {
   if (!auth.user.value) return "通过 Linux DO 登录";
   if (syncControls.value?.baselineConflict.value) return "同步进度等待确认";
   if (syncControls.value?.syncing.value) return "正在同步到云端…";
+  if (["connecting", "backoff"].includes(syncControls.value?.connectionState.value)) {
+    return "正在重新连接云端…";
+  }
+  if (syncControls.value?.connectionState.value === "paused") return "云同步已暂停";
   if (syncControls.value?.error.value) return "云同步暂不可用";
   // if (syncControls.value?.conflictCount.value) {
   //   return `已自动合并 ${syncControls.value.conflictCount.value} 次冲突`;
@@ -895,7 +899,17 @@ async function startAuthenticatedSync(user) {
   const module = await import("./sync/syncEngine.js");
   syncModule.value = module;
   syncControls.value = module.useCloudSyncStatus();
-  await module.startCloudSync(store, user.id);
+  await module.startCloudSync(store, user.id, {
+    onAuthRequired: async () => {
+      const refreshed = await auth.refresh();
+      if (!refreshed) {
+        enqueue("Linux DO 登录已失效，请重新登录", "error", 5200);
+        return;
+      }
+      module.stopCloudSync();
+      await startAuthenticatedSync(refreshed);
+    },
+  });
 }
 
 async function logoutLinuxDo() {
@@ -1136,7 +1150,7 @@ onMounted(async () => {
                 <v-icon v-else :icon="mobileCloudFabIcon" />
               </template>
               <v-list-item-subtitle>
-                {{ auth.user.value ? "上传 5 秒合并 · 拉取 10 秒周期" : "登录后启用多设备增量同步" }}
+                {{ auth.user.value ? "上传 5 秒合并 · 远端变更实时提示" : "登录后启用多设备增量同步" }}
               </v-list-item-subtitle>
             </v-list-item> -->
             <v-list-item
