@@ -1,6 +1,6 @@
 import { base64ToBytes, bytesToBase64 } from "./protocol.js";
 
-export const SYNC_WEBSOCKET_PATH = "/api/v1/sync/ws";
+export const SYNC_WEBSOCKET_PATH = "/v1/sync/ws";
 export const SYNC_WEBSOCKET_PROTOCOL = "stella-sync-v1";
 export const SYNC_WEBSOCKET_VERSION = 1;
 export const MAX_PROTOBUF_BYTES = 512 * 1024;

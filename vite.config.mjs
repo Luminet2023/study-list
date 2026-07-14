@@ -62,10 +62,12 @@ export default defineConfig({
     host: "0.0.0.0",
     allowedHosts: ["terminal.local"],
     proxy: {
-      "/api": {
-        target: process.env.VITE_API_PROXY_TARGET || "http://127.0.0.1:8787",
-        // 保留 localhost:4173，让 OAuth callback 与 Origin 校验使用前端地址。
+      "/v1": {
+        // target 自带 /hifumi 前缀，因此 /v1/* 会转发为 /hifumi/v1/*。
+        target: process.env.VITE_API_PROXY_TARGET || "http://127.0.0.1:8080/hifumi",
+        // 保留 localhost 前端 Host/Origin，便于验证 Go API 的来源策略。
         changeOrigin: false,
+        ws: true,
       },
     },
     warmup: {

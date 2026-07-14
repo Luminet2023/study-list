@@ -1,5 +1,7 @@
 import { computed, readonly, ref } from "vue";
 
+import { resolveApiUrl } from "../lib/apiUrl.js";
+
 const user = ref(null);
 const loading = ref(false);
 const authError = ref(null);
@@ -9,9 +11,10 @@ let initialized = false;
 export async function refreshAuthSession() {
   loading.value = true;
   try {
-    const response = await fetch("/api/v1/auth/session", {
-      credentials: "same-origin",
+    const response = await fetch(resolveApiUrl("v1/auth/session"), {
+      credentials: "include",
       headers: { accept: "application/json" },
+      referrerPolicy: "strict-origin-when-cross-origin",
     });
     if (response.status === 401) {
       user.value = null;
@@ -39,13 +42,14 @@ export async function initializeAuthSession() {
 }
 
 export function loginWithLinuxDo() {
-  globalThis.location?.assign?.("/api/v1/auth/login/linuxdo");
+  globalThis.location?.assign?.(resolveApiUrl("v1/auth/login/linuxdo"));
 }
 
 export async function logoutAuthSession() {
-  const response = await fetch("/api/v1/auth/logout", {
+  const response = await fetch(resolveApiUrl("v1/auth/logout"), {
     method: "POST",
-    credentials: "same-origin",
+    credentials: "include",
+    referrerPolicy: "strict-origin-when-cross-origin",
   });
   if (!response.ok) throw new Error("退出登录失败");
   user.value = null;

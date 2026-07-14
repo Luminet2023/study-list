@@ -45,6 +45,7 @@ test("generated Service Worker bypasses APIs and provides offline navigation", (
     version: "test-version",
     precacheUrls: ["/index.html", "/assets/index-test.js"],
   });
+  assert.match(source, /url\.pathname\.startsWith\("\/v1\/"\)/u);
   assert.match(source, /url\.pathname\.startsWith\("\/api\/"\)/u);
   assert.match(source, /request\.mode === "navigate"/u);
   assert.match(source, /caches\.match\("\/index\.html", \{ ignoreVary: true \}\)/u);

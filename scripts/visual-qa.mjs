@@ -15,7 +15,7 @@ const context = await browser.newContext({
   locale: "zh-CN",
   timezoneId: "Asia/Shanghai",
 });
-await context.route("**/api/v1/auth/session", (route) =>
+await context.route("**/v1/auth/session", (route) =>
   route.fulfill({
     status: 200,
     contentType: "application/json",
@@ -363,7 +363,7 @@ const desktopContext = await browser.newContext({
   locale: "zh-CN",
   timezoneId: "Asia/Shanghai",
 });
-await desktopContext.route("**/api/v1/auth/session", (route) =>
+await desktopContext.route("**/v1/auth/session", (route) =>
   route.fulfill({
     status: 200,
     contentType: "application/json",

@@ -31,7 +31,7 @@ const context = await browser.newContext({
   serviceWorkers: "block",
 });
 
-await context.route("**/api/v1/auth/session", (route) =>
+await context.route("**/v1/auth/session", (route) =>
   route.fulfill({
     status: 200,
     contentType: "application/json",

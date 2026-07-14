@@ -14,7 +14,7 @@ const routes = [
 
 const browser = await chromium.launch({ headless: true });
 const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
-await context.route("**/api/v1/auth/session", (route) =>
+await context.route("**/v1/auth/session", (route) =>
   route.fulfill({
     status: 200,
     contentType: "application/json",
@@ -72,7 +72,7 @@ await mobileContext.addInitScript(() => {
     return nativeGetRandomValues.call(this, values);
   };
 });
-await mobileContext.route("**/api/v1/auth/session", (route) =>
+await mobileContext.route("**/v1/auth/session", (route) =>
   route.fulfill({
     status: 200,
     contentType: "application/json",

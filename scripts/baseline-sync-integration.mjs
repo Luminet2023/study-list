@@ -12,8 +12,9 @@ import {
   encodeResolveBaselineRequest,
   encodeSyncRequest,
 } from "../src/sync/protocol.js";
+import { SESSION_ISSUER, apiRequest } from "./api-config.mjs";
 
-const ORIGIN = process.env.WORKER_ORIGIN ?? "http://127.0.0.1:8787";
+// 用法：可用 API_BASE_URL 与 FRONTEND_ORIGIN 切换 Go API 和两个获准的前端 origin。
 const DEVICE_ID = "device_baseline_integration";
 const BASELINE_A = "baseline_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 const BASELINE_B = "baseline_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
@@ -31,7 +32,7 @@ function parseDevVars(source) {
 }
 
 async function protobufPost(path, token, bytes) {
-  const response = await fetch(`${ORIGIN}${path}`, {
+  const response = await apiRequest(path, {
     method: "POST",
     headers: {
       "content-type": "application/json",
@@ -46,7 +47,7 @@ async function protobufPost(path, token, bytes) {
 
 async function exchange(token, baselineId, cursor = 0, mutations = []) {
   return decodeSyncResponse(await protobufPost(
-    "/api/v1/sync/exchange",
+    "v1/sync/exchange",
     token,
     encodeSyncRequest({
       deviceId: DEVICE_ID,
@@ -63,7 +64,7 @@ async function exchange(token, baselineId, cursor = 0, mutations = []) {
 
 async function resolve(token, request) {
   return decodeResolveBaselineResponse(await protobufPost(
-    "/api/v1/sync/resolve",
+    "v1/sync/resolve",
     token,
     encodeResolveBaselineRequest(request),
   ));
@@ -72,7 +73,14 @@ async function resolve(token, request) {
 const devVars = parseDevVars(await readFile(new URL("../.dev.vars", import.meta.url), "utf8"));
 const now = Math.floor(Date.now() / 1000);
 const subject = `baseline-test-${crypto.randomUUID()}`;
-const token = await signJwt({ sub: subject, iat: now, exp: now + 600 }, devVars.SESSION_JWT_SECRET);
+const token = await signJwt({
+  iss: SESSION_ISSUER,
+  aud: "stellafortuna",
+  sub: subject,
+  iat: now,
+  nbf: now - 5,
+  exp: now + 600,
+}, devVars.SESSION_JWT_SECRET);
 
 const initialized = await exchange(token, BASELINE_A);
 assert.equal(initialized.baselineId, BASELINE_A);

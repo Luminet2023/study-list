@@ -34,7 +34,10 @@ await page.waitForFunction(
 );
 
 const session = await page.evaluate(async () =>
-  fetch("/api/v1/auth/session", { credentials: "same-origin" }).then((response) => response.json()),
+  fetch("/v1/auth/session", {
+    credentials: "include",
+    referrerPolicy: "strict-origin-when-cross-origin",
+  }).then((response) => response.json()),
 );
 const redeemButtons = await page.locator('button[aria-label^="兑现奖励："]').count();
 assert.equal(session.authenticated, true);

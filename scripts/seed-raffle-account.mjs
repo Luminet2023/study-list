@@ -11,11 +11,10 @@ import {
   encodeSyncRequest,
 } from "../src/sync/protocol.js";
 import { signJwt } from "../worker/jwt.js";
+import { SESSION_ISSUER, apiRequest } from "./api-config.mjs";
 
-const origin = new URL(process.env.WORKER_ORIGIN ?? "http://127.0.0.1:8787");
-if (origin.protocol !== "http:" || !["127.0.0.1", "localhost"].includes(origin.hostname)) {
-  throw new Error("seed-raffle-account 仅允许写入 localhost Worker");
-}
+// 用法：TARGET_LINUXDO_SUB=<数字 ID> node scripts/seed-raffle-account.mjs。
+// API_BASE_URL 默认生产 Go API；FRONTEND_ORIGIN 可在两个获准的生产 origin 间切换。
 
 const targetSub = String(process.env.TARGET_LINUXDO_SUB ?? "").trim();
 if (!/^\d+$/u.test(targetSub)) throw new Error("TARGET_LINUXDO_SUB 必须是 Linux DO 数字 user.id");
@@ -41,7 +40,7 @@ if (!devVars.SESSION_JWT_SECRET) throw new Error(".dev.vars 缺少 SESSION_JWT_S
 
 const nowSeconds = Math.floor(Date.now() / 1000);
 const token = await signJwt({
-  iss: "http://localhost:5173",
+  iss: SESSION_ISSUER,
   aud: "stellafortuna",
   sub: targetSub,
   username: "Luminet",
@@ -66,7 +65,7 @@ async function exchange({ baselineId, cursor = 0, mutations = [], localVersion =
     localUpdatedAtMs: Date.now(),
     localProgressDay: "2026-07-13",
   });
-  const response = await fetch(new URL("/api/v1/sync/exchange", origin), {
+  const response = await apiRequest("v1/sync/exchange", {
     method: "POST",
     headers: {
       "content-type": "application/json",

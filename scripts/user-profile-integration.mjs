@@ -8,8 +8,9 @@ import {
   base64ToBytes,
   encodeSyncRequest,
 } from "../src/sync/protocol.js";
+import { SESSION_ISSUER, apiRequest } from "./api-config.mjs";
 
-const ORIGIN = process.env.WORKER_ORIGIN ?? "http://127.0.0.1:8787";
+// 用法：可用 API_BASE_URL 与 FRONTEND_ORIGIN 切换 Go API 和两个获准的前端 origin。
 
 function parseDevVars(source) {
   return Object.fromEntries(source
@@ -23,7 +24,7 @@ function parseDevVars(source) {
 }
 
 async function session(token) {
-  const response = await fetch(`${ORIGIN}/api/v1/auth/session`, {
+  const response = await apiRequest("v1/auth/session", {
     headers: { cookie: `stella_session=${encodeURIComponent(token)}` },
   });
   const body = await response.json();
@@ -36,12 +37,15 @@ const vars = parseDevVars(await readFile(new URL("../.dev.vars", import.meta.url
 const now = Math.floor(Date.now() / 1000);
 const subject = `profile-test-${crypto.randomUUID()}`;
 const firstToken = await signJwt({
+  iss: SESSION_ISSUER,
+  aud: "stellafortuna",
   sub: subject,
   username: "first-user",
   name: "初始名称",
   avatarUrl: "https://example.com/first.png",
   email: "profile@example.com",
   iat: now,
+  nbf: now - 5,
   exp: now + 600,
 }, vars.SESSION_JWT_SECRET);
 const first = await session(firstToken);
@@ -54,11 +58,14 @@ assert.deepEqual(first, {
 });
 
 const updatedToken = await signJwt({
+  iss: SESSION_ISSUER,
+  aud: "stellafortuna",
   sub: subject,
   username: "updated-user",
   name: "更新名称",
   avatarUrl: "https://example.com/updated.png",
   iat: now + 1,
+  nbf: now - 5,
   exp: now + 600,
 }, vars.SESSION_JWT_SECRET);
 const updated = await session(updatedToken);
@@ -68,7 +75,7 @@ assert.equal(updated.avatarUrl, "https://example.com/updated.png");
 assert.equal(updated.email, "profile@example.com", "旧 Session 回填不得清空已保存邮箱");
 
 const baselineId = `baseline_${crypto.randomUUID().replaceAll("-", "")}`;
-const syncResponse = await fetch(`${ORIGIN}/api/v1/sync/exchange`, {
+const syncResponse = await apiRequest("v1/sync/exchange", {
   method: "POST",
   headers: {
     "content-type": "application/json",
@@ -90,6 +97,6 @@ const syncResponse = await fetch(`${ORIGIN}/api/v1/sync/exchange`, {
 const envelope = await syncResponse.json();
 assert.equal(syncResponse.status, 200, JSON.stringify(envelope));
 assert.equal(decodeSyncResponse(base64ToBytes(envelope.protobuf)).baselineId, baselineId);
-assert.equal((await session(updatedToken)).id, subject, "用户资料与同一 Durable Object 学习数据关联");
+assert.equal((await session(updatedToken)).id, subject, "用户资料与同一 owner_key 学习数据关联");
 
 console.log("user profile integration: passed");

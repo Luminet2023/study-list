@@ -6,6 +6,7 @@ import {
   encodeActivityFrame,
   encodeClientFrame,
 } from "./webSocketFrames.js";
+import { resolveApiWebSocketUrl } from "../lib/apiUrl.js";
 
 const OPEN = 1;
 const NORMAL_CLOSE = 1000;
@@ -20,21 +21,16 @@ function syncTransportError(message, code, extra = {}) {
   return Object.assign(new Error(message), { code, ...extra });
 }
 
-function defaultSocketUrl() {
-  const location = globalThis.location;
-  if (!location?.href) return SYNC_WEBSOCKET_PATH;
-  const url = new URL(SYNC_WEBSOCKET_PATH, location.href);
-  url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
-  return url.toString();
-}
-
 export function createSyncWebSocketTransport(options = {}) {
   const WebSocketImpl = options.WebSocketImpl ?? globalThis.WebSocket;
   const setTimer = options.setTimeout ?? globalThis.setTimeout?.bind(globalThis);
   const clearTimer = options.clearTimeout ?? globalThis.clearTimeout?.bind(globalThis);
   const random = options.random ?? Math.random;
   const isActive = options.isActive ?? (() => true);
-  const socketUrl = options.url ?? defaultSocketUrl();
+  const socketUrl = options.url ?? resolveApiWebSocketUrl(SYNC_WEBSOCKET_PATH, {
+    baseUrl: options.apiBaseUrl,
+    locationHref: options.locationHref,
+  });
   let activityActive = options.initialActivity !== false;
   let running = false;
   let socket;

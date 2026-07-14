@@ -10,7 +10,7 @@ import {
 } from "../src/sync/webSocketFrames.js";
 import { createSyncWebSocketTransport } from "../src/sync/webSocketTransport.js";
 
-const SOCKET_URL = "wss://study.example.test/api/v1/sync/ws";
+const SOCKET_URL = "wss://study.example.test/v1/sync/ws";
 const BASELINE_ID = "baseline_0123456789abcdef0123456789abcdef";
 
 class FakeTimers {
@@ -111,10 +111,10 @@ function createHarness(overrides = {}) {
   const states = [];
   const transport = createSyncWebSocketTransport({
     WebSocketImpl,
-    url: SOCKET_URL,
     setTimeout: timers.setTimeout,
     clearTimeout: timers.clearTimeout,
     onStateChange: (state) => states.push(state),
+    ...(Object.hasOwn(overrides, "url") ? {} : { url: SOCKET_URL }),
     ...overrides,
   });
   return { timers, WebSocketImpl, states, transport };
@@ -136,6 +136,20 @@ test("start transitions from stopped through connecting to open", () => {
   assert.equal(transport.getState(), "open");
   assert.equal(transport.isOpen(), true);
   assert.deepEqual(states, ["connecting", "open"]);
+});
+
+test("configured API base produces a prefixed secure WebSocket URL", () => {
+  const { WebSocketImpl, transport } = createHarness({
+    url: undefined,
+    apiBaseUrl: "https://api.luminet.cn/hifumi/",
+  });
+
+  transport.start();
+  assert.equal(
+    WebSocketImpl.instances[0].url,
+    "wss://api.luminet.cn/hifumi/v1/sync/ws",
+  );
+  assert.equal(WebSocketImpl.instances[0].requestedProtocol, SYNC_WEBSOCKET_PROTOCOL);
 });
 
 test("an upgrade without the negotiated sync subprotocol is rejected", () => {
