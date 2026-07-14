@@ -5,6 +5,8 @@
  * Vue store、本地持久化以及 Node 测试共同使用。
  */
 
+import { countMarkdownCharacters } from "../lib/markdown.js";
+
 export const CAMPAIGN_START = "2026-07-13";
 export const CAMPAIGN_END = "2026-08-29";
 export const VIRTUAL_FINAL_SUMMARY_DATE = "2026-08-30";
@@ -23,6 +25,8 @@ export const ITEM_STATUS = Object.freeze({
   COMPLETED: "completed",
   MISSED: "missed",
 });
+
+export const WORKDAY_REQUIRED_INPUT_SLOTS = Object.freeze([4, 7]);
 
 export const SUBJECTS = Object.freeze([
   "语文",
@@ -341,7 +345,9 @@ export function createSaturdayItem(date, slot, input = "") {
  * @property {string|null} title
  * @property {PlanItem[]} items
  * @property {string} journal
- * @property {{liked:boolean, likedAt:string|null}} blessing
+ * @property {boolean} goalsLocked
+ * @property {string|null} goalsLockedAt
+ * @property {{liked:boolean, likedAt:string|null, hitokoto:Object|null}} blessing
  */
 
 /** @param {string|Date} date @returns {CampaignDay} */
@@ -360,7 +366,9 @@ export function createDefaultDay(date) {
           ? [createSaturdayItem(key, 1)]
           : [],
     journal: "",
-    blessing: { liked: false, likedAt: null },
+    goalsLocked: type === DAY_TYPE.WORKDAY ? false : true,
+    goalsLockedAt: null,
+    blessing: { liked: false, likedAt: null, hitokoto: null },
   };
 }
 
@@ -388,6 +396,44 @@ export function getItemText(item) {
   if (!item || typeof item !== "object") return "";
   if (typeof item.text === "string" && item.prefix == null) return item.text;
   return `${item.prefix ?? ""}${item.input ?? ""}${item.suffix ?? ""}`;
+}
+
+/** 工作日第 4、7 项均填写后，才允许进入目标锁定确认；第 6 项可留空。 */
+export function areWorkdayGoalInputsComplete(day) {
+  if (!day || day.type !== DAY_TYPE.WORKDAY) return false;
+  return WORKDAY_REQUIRED_INPUT_SLOTS.every((slot) => {
+    const item = day.items?.find((candidate) => candidate.slot === slot);
+    return Boolean(item && String(item.input ?? "").trim());
+  });
+}
+
+/** 锁定后的输入由 store/UI 共同保护为只读。 */
+export function lockWorkdayGoals(day, lockedAt = new Date().toISOString()) {
+  if (!day || day.type !== DAY_TYPE.WORKDAY) {
+    throw new TypeError("day is not a workday");
+  }
+  if (!areWorkdayGoalInputsComplete(day)) {
+    throw new Error("workday goal inputs are incomplete");
+  }
+  if (day.goalsLocked) return day;
+  return {
+    ...day,
+    goalsLocked: true,
+    goalsLockedAt: String(lockedAt),
+  };
+}
+
+/** 解除工作日目标锁定，保留已填写内容与任务状态。 */
+export function unlockWorkdayGoals(day) {
+  if (!day || day.type !== DAY_TYPE.WORKDAY) {
+    throw new TypeError("day is not a workday");
+  }
+  if (!day.goalsLocked) return day;
+  return {
+    ...day,
+    goalsLocked: false,
+    goalsLockedAt: null,
+  };
 }
 
 /**
@@ -474,6 +520,12 @@ function getAwards(source) {
   return [];
 }
 
+/** 新奖励只有在 redeemedAt 有值时生效；旧数据没有该字段，继续视作已兑现。 */
+export function isAwardRedeemed(award) {
+  if (!award || typeof award !== "object") return false;
+  return !Object.prototype.hasOwnProperty.call(award, "redeemedAt") || Boolean(award.redeemedAt);
+}
+
 /**
  * 奖励 target 格式为 {date, slots:'all'|number[]}；只有明确命中日期及 slot 才生效。
  * @param {unknown} awardSource state、raffle 或 awards 数组
@@ -483,6 +535,7 @@ function getAwards(source) {
 export function isItemExempt(awardSource, date, slot) {
   const key = toDateKey(date);
   return getAwards(awardSource).some((award) =>
+    isAwardRedeemed(award) &&
     Array.isArray(award?.targets) &&
     award.targets.some((target) => {
       if (target?.date !== key) return false;
@@ -507,6 +560,17 @@ export function getEffectiveItemState(item, dateOrDay, awardSource) {
 /** @param {PlanItem} item @param {string|CampaignDay} dateOrDay @param {unknown} awardSource */
 export function getEffectiveItemStatus(item, dateOrDay, awardSource) {
   return getEffectiveItemState(item, dateOrDay, awardSource).status;
+}
+
+/** 目标已锁定且所有已计划项目均已结算（完成或未完成）时，日记才可编辑。 */
+export function isWorkdayJournalUnlocked(day, awardSource) {
+  if (!day || day.type !== DAY_TYPE.WORKDAY || !day.goalsLocked) return false;
+  if (!areWorkdayGoalInputsComplete(day)) return false;
+  return (day.items ?? [])
+    .filter((item) => isCountedPlanItem(day, item))
+    .every(
+      (item) => getEffectiveItemStatus(item, day, awardSource) !== ITEM_STATUS.PENDING,
+    );
 }
 
 /** @param {Object} state @param {string} date */
@@ -550,7 +614,7 @@ export function calculateStatsForDates(state, dates, options = {}) {
     const day = getStateDay(state, date);
     // 周六明确没有日记区，周日为统计页；即使旧数据残留字段也不应误计。
     if (day.type === DAY_TYPE.WORKDAY) {
-      journalCharacters += countCharacters(day.journal ?? day.diary ?? "");
+      journalCharacters += countMarkdownCharacters(day.journal ?? day.diary ?? "");
     }
     for (const item of day.items ?? []) {
       if (!isCountedPlanItem(day, item)) continue;

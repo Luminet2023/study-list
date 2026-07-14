@@ -9,8 +9,10 @@ import {
   DAY_TYPE,
   ITEM_STATUS,
   VIRTUAL_FINAL_SUMMARY_DATE,
+  WORKDAY_REQUIRED_INPUT_SLOTS,
   addDays,
   appendSaturdayItem,
+  areWorkdayGoalInputsComplete,
   calculateLuckIndex,
   calculateTotalStats,
   calculateWeekStats,
@@ -36,12 +38,16 @@ import {
   getWeekdayName,
   getWorkdayTemplate,
   isCampaignDate,
+  isAwardRedeemed,
   isCountedPlanItem,
   isItemExempt,
+  isWorkdayJournalUnlocked,
   isVirtualSummaryDate,
+  lockWorkdayGoals,
   nextItemStatus,
   removeSaturdayItem,
   toDateKey,
+  unlockWorkdayGoals,
   updateItemInput,
 } from "../src/domain/campaign.js";
 import {
@@ -58,10 +64,14 @@ import {
   getAwardPreparation,
   getPrizeTargetDates,
   getRafflePreparation,
+  getRaffleProbabilitySummary,
+  getUtc8DateKey,
   isRafflePrizeTargetInRange,
+  millisecondsUntilUtc8Midnight,
   pickWeightedPrize,
   prepareRaffle,
   recordRaffleDraw,
+  redeemRaffleAward,
   secureRandomInt,
 } from "../src/domain/raffle.js";
 
@@ -193,6 +203,110 @@ test("only slots 4, 6 and 7 are editable", () => {
   assert.throws(() => updateItemInput(day, 1, "不可改"), /not editable/);
 });
 
+test("workday goal inputs gate the irreversible lock", () => {
+  let day = createDefaultDay(CAMPAIGN_START);
+  assert.deepEqual(WORKDAY_REQUIRED_INPUT_SLOTS, [4, 7]);
+  assert.equal(day.goalsLocked, false);
+  assert.equal(areWorkdayGoalInputsComplete(day), false);
+  assert.throws(() => lockWorkdayGoals(day), /inputs are incomplete/);
+
+  day = updateItemInput(day, 4, "必修一");
+  assert.equal(areWorkdayGoalInputsComplete(day), false);
+  day = updateItemInput(day, 7, "第三章");
+  assert.equal(areWorkdayGoalInputsComplete(day), true);
+  assert.equal(getItemText(day.items[5]), "");
+
+  const locked = lockWorkdayGoals(day, "2026-07-13T08:00:00.000Z");
+  assert.equal(locked.goalsLocked, true);
+  assert.equal(locked.goalsLockedAt, "2026-07-13T08:00:00.000Z");
+  assert.equal(lockWorkdayGoals(locked), locked);
+  assert.throws(() => lockWorkdayGoals(createDefaultDay("2026-07-18")), /not a workday/);
+});
+
+test("workday goals can be unlocked without losing content or status", () => {
+  let day = createDefaultDay(CAMPAIGN_START);
+  day = updateItemInput(day, 4, "必修一");
+  day = updateItemInput(day, 7, "第三章");
+  day = lockWorkdayGoals(day, "2026-07-13T08:00:00.000Z");
+  day = cycleItemStatus(day, 1);
+
+  const unlocked = unlockWorkdayGoals(day);
+  assert.equal(unlocked.goalsLocked, false);
+  assert.equal(unlocked.goalsLockedAt, null);
+  assert.equal(unlocked.items[0].status, ITEM_STATUS.COMPLETED);
+  assert.equal(unlocked.items.find((item) => item.slot === 4).input, "必修一");
+  assert.equal(unlocked.items.find((item) => item.slot === 7).input, "第三章");
+  assert.equal(unlockWorkdayGoals(unlocked), unlocked);
+  assert.throws(() => unlockWorkdayGoals(createDefaultDay("2026-07-18")), /not a workday/);
+});
+
+test("workday journal unlocks after every effective checkbox is settled", () => {
+  let day = createDefaultDay(CAMPAIGN_START);
+  day = updateItemInput(day, 4, "必修一");
+  day = updateItemInput(day, 7, "第三章");
+  const state = createDefaultState();
+
+  assert.equal(isWorkdayJournalUnlocked(day, state), false);
+  day = lockWorkdayGoals(day, "2026-07-13T08:00:00.000Z");
+  assert.equal(isWorkdayJournalUnlocked(day, state), false);
+
+  day = {
+    ...day,
+    items: day.items.map((item) => ({
+      ...item,
+      status: [6, 8].includes(item.slot) ? ITEM_STATUS.PENDING : ITEM_STATUS.COMPLETED,
+    })),
+  };
+  assert.equal(isWorkdayJournalUnlocked(day, state), false);
+
+  state.raffle.awards = [{ targets: [{ date: CAMPAIGN_START, slots: [8] }] }];
+  assert.equal(isWorkdayJournalUnlocked(day, state), true);
+});
+
+test("missed workday goals are settled and allow journal entry", () => {
+  let day = createDefaultDay(CAMPAIGN_START);
+  day = updateItemInput(day, 4, "必修一");
+  day = updateItemInput(day, 7, "第三章");
+  day = lockWorkdayGoals(day, "2026-07-13T08:00:00.000Z");
+  day = {
+    ...day,
+    items: day.items.map((item) => ({
+      ...item,
+      status: item.slot === 4 ? ITEM_STATUS.MISSED : ITEM_STATUS.COMPLETED,
+    })),
+  };
+
+  assert.equal(isWorkdayJournalUnlocked(day, createDefaultState()), true);
+
+  day = {
+    ...day,
+    items: day.items.map((item) =>
+      item.slot === 8 ? { ...item, status: ITEM_STATUS.PENDING } : item,
+    ),
+  };
+  assert.equal(isWorkdayJournalUnlocked(day, createDefaultState()), false);
+});
+
+test("filled slot 6 becomes required for journal unlock", () => {
+  let day = createDefaultDay(CAMPAIGN_START);
+  day = updateItemInput(day, 4, "必修一");
+  day = updateItemInput(day, 6, "整理今日错题");
+  day = updateItemInput(day, 7, "第三章");
+  day = lockWorkdayGoals(day, "2026-07-13T08:00:00.000Z");
+  day = {
+    ...day,
+    items: day.items.map((item) => ({
+      ...item,
+      status: item.slot === 6 ? ITEM_STATUS.PENDING : ITEM_STATUS.COMPLETED,
+    })),
+  };
+
+  const state = createDefaultState();
+  assert.equal(isWorkdayJournalUnlocked(day, state), false);
+  day = cycleItemStatus(day, 6);
+  assert.equal(isWorkdayJournalUnlocked(day, state), true);
+});
+
 test("slot 4 and slot 7 compose editable text between fixed parts", () => {
   let day = createDefaultDay("2026-07-13");
   day = updateItemInput(day, 4, " 必修一");
@@ -273,7 +387,7 @@ test("week stats obey asOf and do not count future preset days", () => {
 
 test("journal characters count workdays only and ignore Saturday/Sunday residue", () => {
   const state = createDefaultState();
-  state.days["2026-07-13"].journal = "工作日 日结";
+  state.days["2026-07-13"].journal = "## 工作日\n\n**日结**";
   state.days["2026-07-18"].journal = "不应计入";
   state.days["2026-07-19"].journal = "不应计入";
   const stats = calculateWeekStats(state, 1);
@@ -371,6 +485,32 @@ test("blank slot 6 is treated as satisfied for full attendance", () => {
   assert.equal(stats.fullAttendanceWeeks, 7);
 });
 
+test("filled slot 6 must be completed for full attendance", () => {
+  const state = createDefaultState();
+  const firstWeek = getCampaignWeek(1);
+  for (const date of firstWeek.dates) state.days[date] = completeDay(state.days[date]);
+  state.days[CAMPAIGN_START] = updateItemInput(
+    state.days[CAMPAIGN_START],
+    6,
+    "整理今日补充任务",
+  );
+  state.days[CAMPAIGN_START] = {
+    ...state.days[CAMPAIGN_START],
+    items: state.days[CAMPAIGN_START].items.map((item) =>
+      item.slot === 6 ? { ...item, status: ITEM_STATUS.PENDING } : item,
+    ),
+  };
+
+  let stats = calculateWeekStats(state, 1);
+  assert.equal(stats.unfinishedItems, 1);
+  assert.equal(stats.fullAttendance, false);
+
+  state.days[CAMPAIGN_START] = cycleItemStatus(state.days[CAMPAIGN_START], 6);
+  stats = calculateWeekStats(state, 1);
+  assert.equal(stats.unfinishedItems, 0);
+  assert.equal(stats.fullAttendance, true);
+});
+
 test("asOf before campaign produces no plans or closed weeks", () => {
   const stats = calculateTotalStats(createDefaultState(), { asOf: "2026-07-12" });
   assert.equal(stats.planItems, 0);
@@ -386,6 +526,36 @@ test("raffle base constants sum to exactly 700000", () => {
     BASE_RAFFLE_WEIGHTS.nextWeek;
   assert.equal(sum, RAFFLE_TOTAL_WEIGHT);
   assert.equal(sum, 700_000);
+});
+
+test("UTC+8 raffle day and next-midnight delay are exact", () => {
+  const beforeMidnight = new Date("2026-07-12T15:59:59.250Z");
+  assert.equal(getUtc8DateKey(beforeMidnight), "2026-07-12");
+  assert.equal(millisecondsUntilUtc8Midnight(beforeMidnight), 750);
+  assert.equal(getUtc8DateKey(new Date("2026-07-12T16:00:00.000Z")), "2026-07-13");
+  assert.equal(millisecondsUntilUtc8Midnight(new Date("2026-07-12T16:00:00.000Z")), 86_400_000);
+});
+
+test("dynamic probability summary follows date validity and slot 6 redistribution", () => {
+  const opening = Object.fromEntries(
+    getRaffleProbabilitySummary(CAMPAIGN_START).map((entry) => [entry.id, entry]),
+  );
+  assert.equal(opening.tasks.probability, "各 1% · 共 8%");
+  assert.equal(opening.none.probability, "90.999%");
+
+  const redistributed = Object.fromEntries(
+    getRaffleProbabilitySummary(CAMPAIGN_START, { redistributeSlot6: true })
+      .map((entry) => [entry.id, entry]),
+  );
+  assert.equal(redistributed.tasks.probability, "第 6 项 0% · 其余各 1.143% · 共 8%");
+  assert.equal(redistributed.tasks.entries.find((entry) => entry.id === "task:6").weight, 0);
+
+  const penultimate = Object.fromEntries(
+    getRaffleProbabilitySummary("2026-08-28").map((entry) => [entry.id, entry]),
+  );
+  assert.equal(penultimate.saturday.probability, "0.5%");
+  assert.equal(penultimate.tasks.probability, "0%");
+  assert.equal(penultimate.none.probability, "99.5%");
 });
 
 test("normal early-date pool preserves all configured integer weights", () => {
@@ -505,6 +675,40 @@ test("daily raffle can be recorded once per calendar date", () => {
   );
 });
 
+test("winning reward stays pending until redeemed and redemption is idempotent", () => {
+  let state = createDefaultState();
+  state = recordRaffleDraw(state, {
+    id: "pending-win",
+    drawDate: CAMPAIGN_START,
+    prizeId: "task:1",
+    mode: "daily",
+  });
+
+  const pendingAward = state.raffle.awards[0];
+  assert.equal(pendingAward.redeemedAt, null);
+  assert.equal(isAwardRedeemed(pendingAward), false);
+  assert.equal(isItemExempt(state, "2026-07-14", 1), false);
+  assert.equal(state.days["2026-07-14"].items[0].status, ITEM_STATUS.PENDING);
+
+  const redeemed = redeemRaffleAward(state, "pending-win", "2026-07-13T12:00:00.000Z");
+  assert.equal(redeemed.raffle.awards[0].redeemedAt, "2026-07-13T12:00:00.000Z");
+  assert.equal(redeemed.raffle.draws[0].redeemedAt, "2026-07-13T12:00:00.000Z");
+  assert.equal(isItemExempt(redeemed, "2026-07-14", 1), true);
+  assert.equal(redeemed.days["2026-07-14"].items[0].status, ITEM_STATUS.PENDING);
+  assert.strictEqual(
+    redeemRaffleAward(redeemed, "pending-win", "2026-07-13T13:00:00.000Z"),
+    redeemed,
+  );
+});
+
+test("legacy awards without redeemedAt remain effective", () => {
+  const state = createDefaultState();
+  const award = createAward("task:1", CAMPAIGN_START, "legacy-award");
+  state.raffle.awards.push(award);
+  assert.equal(isAwardRedeemed(award), true);
+  assert.equal(isItemExempt(state, "2026-07-14", 1), true);
+});
+
 test("paper bonus requires same-day completion flag and stops after three", () => {
   let state = createDefaultState();
   assert.equal(canUsePaperBonus(state, CAMPAIGN_START, false), false);
@@ -537,6 +741,8 @@ test("total statistics include wins, target distribution and luck index", () => 
     prizeId: "task:1",
     mode: "daily",
   });
+  assert.equal(calculateTotalStats(state).exemptedItems, 0);
+  state = redeemRaffleAward(state, "win-1", "2026-07-13T12:00:00.000Z");
   state = recordRaffleDraw(state, {
     id: "lose-1",
     drawDate: "2026-07-14",

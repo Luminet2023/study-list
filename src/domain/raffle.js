@@ -15,6 +15,33 @@ import {
 export const RAFFLE_TOTAL_WEIGHT = 700_000;
 export const RAFFLE_MAX_PAPER_BONUS_DRAWS = 3;
 
+const UTC8_OFFSET_MS = 8 * 60 * 60 * 1_000;
+
+/** 返回指定时刻在 UTC+8 的日历日，供每日机会与零点调度共用。 */
+export function getUtc8DateKey(now = new Date()) {
+  const instant = now instanceof Date ? now : new Date(now);
+  if (Number.isNaN(instant.getTime())) throw new TypeError("invalid instant");
+  const shifted = new Date(instant.getTime() + UTC8_OFFSET_MS);
+  const year = shifted.getUTCFullYear();
+  const month = String(shifted.getUTCMonth() + 1).padStart(2, "0");
+  const day = String(shifted.getUTCDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+/** 返回距离下一个 UTC+8 零点的精确毫秒数。 */
+export function millisecondsUntilUtc8Midnight(now = new Date()) {
+  const instant = now instanceof Date ? now : new Date(now);
+  if (Number.isNaN(instant.getTime())) throw new TypeError("invalid instant");
+  const shifted = new Date(instant.getTime() + UTC8_OFFSET_MS);
+  const nextMidnightUtc8 =
+    Date.UTC(
+      shifted.getUTCFullYear(),
+      shifted.getUTCMonth(),
+      shifted.getUTCDate() + 1,
+    ) - UTC8_OFFSET_MS;
+  return Math.max(1, nextMidnightUtc8 - instant.getTime());
+}
+
 export const PRIZE_IDS = Object.freeze({
   NONE: "none",
   SATURDAY: "saturday",
@@ -222,6 +249,60 @@ export function buildRafflePool(drawDate, options = {}) {
   };
 }
 
+/** @param {number} weight @param {number} totalWeight */
+function formatPoolProbability(weight, totalWeight) {
+  const value = (weight / totalWeight) * 100;
+  return `${Number(value.toFixed(3))}%`;
+}
+
+/**
+ * 生成与指定日期真实奖池一致的展示摘要。越界奖项折回未中、slot 6 重分都会
+ * 反映在结果中；每行同时保留明细，App 可按需展开而不重复概率算法。
+ * @param {string|Date} drawDate
+ * @param {Parameters<typeof buildRafflePool>[1]} [options]
+ */
+export function getRaffleProbabilitySummary(drawDate, options = {}) {
+  const pool = buildRafflePool(drawDate, options);
+  const byKind = (kind) => pool.entries.filter((entry) => entry.kind === kind);
+  const totalOf = (entries) => entries.reduce((sum, entry) => sum + entry.weight, 0);
+  const detailOf = (entries) =>
+    entries.map((entry) => ({
+      id: entry.id,
+      label: entry.label,
+      valid: entry.valid,
+      weight: entry.weight,
+      probability: formatPoolProbability(entry.weight, pool.totalWeight),
+    }));
+  const tasks = byKind("task");
+  const weekdays = byKind("weekday");
+  const saturday = byKind("saturday");
+  const nextWeek = byKind("next-week");
+  const none = byKind("none");
+  const taskTotal = totalOf(tasks);
+  const weekdayTotal = totalOf(weekdays);
+  const activeTasks = tasks.filter((entry) => entry.weight > 0);
+  const activeWeekdays = weekdays.filter((entry) => entry.weight > 0);
+  const taskWeights = new Set(activeTasks.map((entry) => entry.weight));
+  let taskProbability = formatPoolProbability(taskTotal, pool.totalWeight);
+  if (pool.redistributedSlot6 && taskTotal > 0) {
+    taskProbability = `第 6 项 0% · 其余各 ${formatPoolProbability(activeTasks[0]?.weight ?? 0, pool.totalWeight)} · 共 ${formatPoolProbability(taskTotal, pool.totalWeight)}`;
+  } else if (activeTasks.length === tasks.length && taskWeights.size === 1) {
+    taskProbability = `各 ${formatPoolProbability(activeTasks[0].weight, pool.totalWeight)} · 共 ${formatPoolProbability(taskTotal, pool.totalWeight)}`;
+  }
+  let weekdayProbability = formatPoolProbability(weekdayTotal, pool.totalWeight);
+  if (activeWeekdays.length > 0) {
+    weekdayProbability = `${activeWeekdays.length} 项有效 · 各 ${formatPoolProbability(activeWeekdays[0].weight, pool.totalWeight)} · 共 ${formatPoolProbability(weekdayTotal, pool.totalWeight)}`;
+  }
+
+  return [
+    { id: "tasks", label: "免下一个工作日第 1—8 项", probability: taskProbability, entries: detailOf(tasks) },
+    { id: "saturday", label: "免周六努力", probability: formatPoolProbability(totalOf(saturday), pool.totalWeight), entries: detailOf(saturday) },
+    { id: "weekdays", label: "免下一对应工作日全天", probability: weekdayProbability, entries: detailOf(weekdays) },
+    { id: "next-week", label: "免下一周工作日", probability: formatPoolProbability(totalOf(nextWeek), pool.totalWeight), entries: detailOf(nextWeek) },
+    { id: "none", label: "未中", probability: formatPoolProbability(totalOf(none), pool.totalWeight), entries: detailOf(none) },
+  ];
+}
+
 /**
  * 检查下个工作日第 6 项；仅当目标仍在 campaign 且当前为空时要求确认。
  * @param {Object} state
@@ -361,6 +442,8 @@ export function pickWeightedPrize(pool, randomInteger) {
  * @property {string} prizeId
  * @property {string} label
  * @property {string} drawDate
+ * @property {string} [drawId]
+ * @property {string|null} [redeemedAt]
  * @property {{date:string,slots:'all'|number[]}[]} targets
  */
 
@@ -453,13 +536,24 @@ export function recordRaffleDraw(state, draw) {
   if (!valid) throw new RangeError(`cannot record invalid target prize: ${definition.id}`);
   const award = createAward({ ...definition, targetDates, valid }, date, `${draw.id}:award`);
   const raffle = state?.raffle ?? {};
-  const record = { ...draw, drawDate: date, mode };
+  const pendingAward = award
+    ? { ...award, drawId: draw.id, redeemedAt: null }
+    : null;
+  const record = {
+    ...draw,
+    drawDate: date,
+    mode,
+    awardId: pendingAward?.id ?? null,
+    redeemedAt: null,
+  };
   return {
     ...state,
     raffle: {
       ...raffle,
       draws: [...(raffle.draws ?? []), record],
-      awards: award ? [...(raffle.awards ?? []), award] : [...(raffle.awards ?? [])],
+      awards: pendingAward
+        ? [...(raffle.awards ?? []), pendingAward]
+        : [...(raffle.awards ?? [])],
       dailyDrawDates:
         mode === "daily"
           ? { ...(raffle.dailyDrawDates ?? {}), [date]: draw.id }
@@ -469,6 +563,48 @@ export function recordRaffleDraw(state, draw) {
           ? [...(raffle.paperBonusDates ?? []), date]
           : [...(raffle.paperBonusDates ?? [])],
       bonusDrawsUsed: (raffle.bonusDrawsUsed ?? 0) + (mode === "paper-bonus" ? 1 : 0),
+    },
+  };
+}
+
+/**
+ * 兑现一次中奖记录。兑现是幂等的，且只改变奖励生命周期，不覆写原始任务状态。
+ * 缺少 redeemedAt 字段的旧奖励视作历史已兑现记录。
+ * @param {Object} state
+ * @param {string} drawId
+ * @param {string} [redeemedAt]
+ */
+export function redeemRaffleAward(state, drawId, redeemedAt = new Date().toISOString()) {
+  const raffle = state?.raffle ?? {};
+  const draws = raffle.draws ?? [];
+  const drawIndex = draws.findIndex((draw) => draw.id === drawId);
+  if (drawIndex < 0) throw new RangeError(`raffle draw not found: ${drawId}`);
+
+  const draw = draws[drawIndex];
+  if (draw.prizeId === PRIZE_IDS.NONE) throw new Error("未中奖记录无需兑现");
+
+  const awards = raffle.awards ?? [];
+  const awardIndex = awards.findIndex(
+    (award) => award?.drawId === drawId || award?.id === draw.awardId || award?.id === `${drawId}:award`,
+  );
+  if (awardIndex < 0) throw new RangeError(`raffle award not found: ${drawId}`);
+
+  const award = awards[awardIndex];
+  const legacyRedeemed = !Object.prototype.hasOwnProperty.call(award, "redeemedAt");
+  if (legacyRedeemed || award.redeemedAt) return state;
+
+  const timestamp = String(redeemedAt);
+  const nextAwards = [...awards];
+  nextAwards[awardIndex] = { ...award, drawId, redeemedAt: timestamp };
+  const nextDraws = [...draws];
+  nextDraws[drawIndex] = { ...draw, awardId: award.id, redeemedAt: timestamp };
+
+  return {
+    ...state,
+    raffle: {
+      ...raffle,
+      draws: nextDraws,
+      awards: nextAwards,
     },
   };
 }
