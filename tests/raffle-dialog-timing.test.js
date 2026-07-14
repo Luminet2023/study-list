@@ -39,4 +39,6 @@ test("raffle result keeps the dialog open before closing and enqueueing the toas
   assert.match(raffleView, /animation-play-state: paused;/u);
   assert.match(raffleView, /\.draw-wheel-shell--settled \.draw-wheel-pointer \{[\s\S]+?animation: none;[\s\S]+?rotate\(0deg\)/u);
   assert.match(raffleView, /emit\("draw-wheel-settled"\)/u);
+  assert.match(raffleView, /class="draw-wheel-label-text"/u);
+  assert.match(raffleView, /--draw-wheel-label-counter-rotation/u);
 });

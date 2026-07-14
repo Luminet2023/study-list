@@ -31,6 +31,12 @@ export function getRaffleWheelTargetRotation(prizeKind) {
   return normalizeWheelRotation(-index * SEGMENT_ANGLE);
 }
 
+/** 抵消轮盘最终旋转，使扇区文字在屏幕坐标中保持正立。 */
+export function getRaffleWheelLabelCounterRotation(prizeKind) {
+  const target = getRaffleWheelTargetRotation(prizeKind);
+  return target === 0 ? 0 : -target;
+}
+
 /** 从当前角度继续正向旋转若干圈，并精确落到结果扇区中心。 */
 export function getRaffleWheelLandingRotation(currentDegrees, prizeKind, extraTurns = 1) {
   const current = Number(currentDegrees);

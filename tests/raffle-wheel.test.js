@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   RAFFLE_WHEEL_SEGMENTS,
+  getRaffleWheelLabelCounterRotation,
   getRaffleWheelLandingDuration,
   getRaffleWheelLandingRotation,
   getRaffleWheelTargetRotation,
@@ -15,6 +16,14 @@ test("raffle wheel maps every real prize kind to the center below the top pointe
   assert.equal(getRaffleWheelTargetRotation("weekday"), 270);
   assert.equal(getRaffleWheelTargetRotation("next-week"), 225);
   assert.equal(getRaffleWheelTargetRotation("none"), 180);
+});
+
+test("raffle wheel counter-rotates labels so landed text stays upright", () => {
+  for (const kind of ["task", "saturday", "weekday", "next-week", "none"]) {
+    const wheelRotation = getRaffleWheelTargetRotation(kind);
+    const labelRotation = getRaffleWheelLabelCounterRotation(kind);
+    assert.equal((wheelRotation + labelRotation + 360) % 360, 0, kind);
+  }
 });
 
 test("raffle wheel landing keeps moving forward before reaching the exact result", () => {

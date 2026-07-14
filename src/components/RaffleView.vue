@@ -3,6 +3,7 @@ import { computed, nextTick, onBeforeUnmount, ref, watch } from "vue";
 
 import {
   RAFFLE_WHEEL_SEGMENTS,
+  getRaffleWheelLabelCounterRotation,
   getRaffleWheelLandingDuration,
   getRaffleWheelLandingRotation,
   getRaffleWheelTargetRotation,
@@ -162,6 +163,7 @@ function resetWheelAnimation() {
   if (!wheel) return;
   wheel.style.removeProperty("animation");
   wheel.style.removeProperty("transform");
+  wheel.style.removeProperty("--draw-wheel-label-counter-rotation");
 }
 
 async function landWheel(target) {
@@ -172,6 +174,7 @@ async function landWheel(target) {
 
   const currentRotation = rotationFromTransform(getComputedStyle(wheel).transform);
   const targetRotation = getRaffleWheelTargetRotation(target.prizeKind);
+  const labelCounterRotation = getRaffleWheelLabelCounterRotation(target.prizeKind);
   const landingRotation = getRaffleWheelLandingRotation(currentRotation, target.prizeKind);
   const landingDuration = getRaffleWheelLandingDuration(currentRotation, target.prizeKind);
   wheel.style.animation = "none";
@@ -198,6 +201,10 @@ async function landWheel(target) {
   }
 
   if (run !== landingRun || wheelElement.value !== wheel) return;
+  wheel.style.setProperty(
+    "--draw-wheel-label-counter-rotation",
+    `${labelCounterRotation}deg`,
+  );
   wheel.style.transform = `rotate(${targetRotation}deg)`;
   landingAnimation?.cancel();
   landingAnimation = null;
@@ -483,7 +490,9 @@ function confirmPaperClaim() {
                 class="draw-wheel-label"
                 :style="wheelLabelStyle(index)"
               >
-                {{ shortWheelLabel(entry.label) }}
+                <span class="draw-wheel-label-text">
+                  {{ shortWheelLabel(entry.label) }}
+                </span>
               </span>
             </div>
             <div class="draw-wheel-hub" aria-hidden="true">
@@ -861,6 +870,17 @@ function confirmPaperClaim() {
   line-height: 18px;
   text-align: center;
   white-space: nowrap;
+}
+
+.draw-wheel-label-text {
+  display: block;
+  width: 100%;
+  transform: rotate(0deg);
+  transform-origin: center;
+}
+
+.draw-wheel--settled .draw-wheel-label-text {
+  transform: rotate(var(--draw-wheel-label-counter-rotation, 0deg));
 }
 
 .draw-wheel-hub {
