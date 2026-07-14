@@ -1,5 +1,7 @@
 <script setup>
-defineProps({
+import { onBeforeUnmount, ref, watch } from "vue";
+
+const props = defineProps({
   meta: {
     type: Object,
     required: true,
@@ -16,22 +18,82 @@ defineProps({
     type: Boolean,
     default: false,
   },
+  quoteLoading: {
+    type: Boolean,
+    default: false,
+  },
+  quoteError: {
+    type: String,
+    default: "",
+  },
+  typewriter: {
+    type: Boolean,
+    default: false,
+  },
+  attribution: {
+    type: String,
+    default: "",
+  },
+  attributionHref: {
+    type: String,
+    default: "",
+  },
 });
 
-defineEmits(["menu", "copy", "toggle-like"]);
+defineEmits(["copy", "toggle-like", "retry"]);
+
+const displayedQuote = ref("");
+const typing = ref(false);
+let typingTimer;
+
+function stopTyping() {
+  globalThis.clearTimeout?.(typingTimer);
+  typingTimer = undefined;
+  typing.value = false;
+}
+
+function prefersReducedMotion() {
+  return globalThis.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches ?? false;
+}
+
+function revealQuote() {
+  stopTyping();
+  const quote = String(props.quote ?? "");
+  if (props.quoteLoading) {
+    displayedQuote.value = "";
+    return;
+  }
+  if (!props.typewriter || !quote || prefersReducedMotion()) {
+    displayedQuote.value = quote;
+    return;
+  }
+  const characters = Array.from(quote);
+  let index = 0;
+  displayedQuote.value = "";
+  typing.value = true;
+  const typeNext = () => {
+    index += 1;
+    displayedQuote.value = characters.slice(0, index).join("");
+    if (index >= characters.length) {
+      typing.value = false;
+      return;
+    }
+    typingTimer = globalThis.setTimeout?.(typeNext, 42);
+  };
+  typingTimer = globalThis.setTimeout?.(typeNext, 80);
+}
+
+watch(
+  () => [props.quote, props.quoteLoading, props.typewriter],
+  revealQuote,
+  { immediate: true },
+);
+
+onBeforeUnmount(stopTyping);
 </script>
 
 <template>
   <header class="poetic-header" :class="{ 'poetic-header--dense': dense }">
-    <v-btn
-      class="menu-trigger"
-      icon="mdi-menu"
-      variant="outlined"
-      size="44"
-      aria-label="打开工具栏"
-      @click="$emit('menu')"
-    />
-
     <div class="date-lockup" aria-label="当前日期">
       <span class="date-numeral">{{ meta.day }}</span>
       <v-divider vertical class="date-divider" />
@@ -53,16 +115,57 @@ defineEmits(["menu", "copy", "toggle-like"]);
     </div>
 
     <div class="blessing-wrap">
-      <v-btn
-        class="blessing-copy"
-        variant="text"
-        block
-        :ripple="false"
-        aria-label="复制今日赠语"
-        @click="$emit('copy')"
-      >
-        <span class="blessing-text">{{ quote }}</span>
-      </v-btn>
+      <span class="d-sr-only" aria-live="polite">
+        {{ quoteLoading ? "正在获取今日赠语" : quote }}
+      </span>
+
+      <v-fade-transition mode="out-in">
+        <v-skeleton-loader
+          v-if="quoteLoading"
+          key="quote-loading"
+          class="blessing-skeleton"
+          type="text@2"
+          aria-label="正在获取今日赠语"
+        />
+
+        <div v-else-if="quoteError" key="quote-error" class="blessing-error">
+          <v-icon icon="mdi-cloud-alert-outline" size="20" />
+          <span>{{ quoteError }}</span>
+          <v-btn size="small" variant="text" color="primary" @click="$emit('retry')">
+            重新获取
+          </v-btn>
+        </div>
+
+        <div v-else key="quote-ready">
+          <v-btn
+            class="blessing-copy"
+            variant="text"
+            block
+            :ripple="false"
+            :disabled="!quote"
+            aria-label="复制今日赠语"
+            @click="$emit('copy')"
+          >
+            <span class="blessing-text" aria-hidden="true">
+              {{ displayedQuote }}<span v-if="typing" class="typing-caret">｜</span>
+            </span>
+          </v-btn>
+
+          <v-btn
+            v-if="attribution && attributionHref"
+            class="quote-attribution"
+            :href="attributionHref"
+            target="_blank"
+            rel="noopener noreferrer"
+            variant="text"
+            size="x-small"
+            append-icon="mdi-open-in-new"
+            @click.stop
+          >
+            {{ attribution }}
+          </v-btn>
+        </div>
+      </v-fade-transition>
 
       <div class="blessing-actions">
         <v-btn
@@ -70,6 +173,7 @@ defineEmits(["menu", "copy", "toggle-like"]);
           :color="liked ? 'secondary' : undefined"
           variant="text"
           size="44"
+          :disabled="quoteLoading || !quote"
           :aria-label="liked ? '取消收藏赠语' : '收藏赠语'"
           @click="$emit('toggle-like')"
         />
@@ -77,6 +181,7 @@ defineEmits(["menu", "copy", "toggle-like"]);
           icon="mdi-content-copy"
           variant="text"
           size="44"
+          :disabled="quoteLoading || !quote"
           aria-label="复制今日赠语"
           @click="$emit('copy')"
         />
@@ -96,14 +201,6 @@ defineEmits(["menu", "copy", "toggle-like"]);
   min-height: 226px;
 }
 
-.menu-trigger {
-  border-color: rgba(49, 36, 50, 0.68);
-  left: 12px;
-  position: absolute;
-  top: max(20px, env(safe-area-inset-top));
-  z-index: 4;
-}
-
 .date-lockup {
   align-items: flex-start;
   display: flex;
@@ -114,8 +211,8 @@ defineEmits(["menu", "copy", "toggle-like"]);
 }
 
 .date-numeral {
-  color: rgba(116, 98, 107, 0.2);
-  font-family: "Cormorant Garamond", "Bodoni Moda", Georgia, serif;
+  color: rgba(var(--v-theme-primary), 0.24);
+  font-family: var(--app-font-family);
   font-size: clamp(96px, 28vw, 114px);
   font-weight: 300;
   letter-spacing: -0.08em;
@@ -123,9 +220,13 @@ defineEmits(["menu", "copy", "toggle-like"]);
 }
 
 .date-divider {
-  border-color: rgba(49, 36, 50, 0.52);
+  border-color: rgba(var(--v-theme-outline), 0.52);
   height: 116px;
   opacity: 1;
+}
+
+:global(.v-theme--poeticNight) .date-numeral {
+  color: rgba(var(--v-theme-primary), 0.5);
 }
 
 .date-meta {
@@ -133,7 +234,7 @@ defineEmits(["menu", "copy", "toggle-like"]);
   color: rgb(var(--v-theme-on-background));
   display: flex;
   flex-direction: column;
-  font-family: "Noto Serif SC", "Songti SC", serif;
+  font-family: var(--app-font-family);
   font-size: 12px;
   gap: 1px;
   line-height: 1.35;
@@ -160,9 +261,33 @@ defineEmits(["menu", "copy", "toggle-like"]);
   white-space: normal;
 }
 
+.blessing-skeleton {
+  width: min(100%, 286px);
+  min-height: 72px;
+  margin: 0 auto;
+  background: transparent;
+}
+
+.blessing-skeleton :deep(.v-skeleton-loader__text) {
+  height: 14px;
+  margin: 10px auto;
+  border-radius: 1px;
+}
+
+.blessing-error {
+  display: flex;
+  min-height: 72px;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  color: rgba(var(--v-theme-on-background), 0.72);
+  font-size: 0.78rem;
+}
+
 .blessing-text {
   color: rgb(var(--v-theme-on-background));
-  font-family: "LXGW WenKai", "STKaiti", "KaiTi", serif;
+  font-family: var(--app-font-family);
   font-size: clamp(18px, 4.9vw, 20px);
   font-weight: 400;
   letter-spacing: 0.07em;
@@ -174,6 +299,29 @@ defineEmits(["menu", "copy", "toggle-like"]);
   display: flex;
   justify-content: center;
   margin-top: 4px;
+}
+
+.typing-caret {
+  color: rgb(var(--v-theme-secondary));
+  animation: typing-caret-blink 720ms steps(1, end) infinite;
+}
+
+.quote-attribution {
+  max-width: 100%;
+  margin-top: 2px;
+  opacity: 0.66;
+  font-family: var(--app-font-family);
+  letter-spacing: 0.05em;
+  text-transform: none;
+}
+
+@keyframes typing-caret-blink {
+  0%, 48% { opacity: 1; }
+  49%, 100% { opacity: 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .typing-caret { animation: none; }
 }
 
 @media (max-width: 360px) {
@@ -198,10 +346,6 @@ defineEmits(["menu", "copy", "toggle-like"]);
     height: 100dvh;
     padding: 54px 46px 42px;
     border-right: 1px solid rgba(var(--v-theme-outline), 0.2);
-  }
-
-  .menu-trigger {
-    display: none;
   }
 
   .date-lockup {
