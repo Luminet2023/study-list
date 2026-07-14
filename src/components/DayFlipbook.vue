@@ -19,10 +19,6 @@ const props = defineProps({
     type: String,
     required: true,
   },
-  enabled: {
-    type: Boolean,
-    default: false,
-  },
   duration: {
     type: Number,
     default: 850,
@@ -41,7 +37,6 @@ const busy = ref(false);
 const phase = ref("idle");
 const engineReady = ref(false);
 const engineUnavailable = ref(false);
-const bookMounted = ref(props.enabled);
 const engineInstanceId = ref(0);
 const pageEntries = computed(() => createDayFlipbookPages(props.dates));
 
@@ -90,7 +85,7 @@ function sourcePageAt(position) {
 
 function scrollPageToTop(position = positionForDate(props.selectedDate)) {
   const page = sourcePageAt(position)?.querySelector?.(".day-page")
-    ?? host.value?.querySelector?.(".day-flipbook__classic .day-page");
+    ?? host.value?.querySelector?.(".day-flipbook__fallback .day-page");
   page?.scrollTo?.({ top: 0, behavior: "instant" });
   if (page && typeof page.scrollTo !== "function") page.scrollTop = 0;
 }
@@ -285,10 +280,9 @@ function syncPortraitGeometry(width, height) {
 }
 
 async function ensureEngine() {
-  if (pageFlip || !props.enabled || !props.active || destroyed) return pageFlip;
+  if (pageFlip || !props.active || destroyed) return pageFlip;
   if (ensureEnginePromise) return ensureEnginePromise;
 
-  bookMounted.value = true;
   engineUnavailable.value = false;
 
   ensureEnginePromise = (async () => {
@@ -296,7 +290,7 @@ async function ensureEngine() {
       await nextTick();
       const PageFlip = await loadPageFlip();
       await nextTick();
-      if (destroyed || !book.value || !props.enabled || !props.active) return null;
+      if (destroyed || !book.value || !props.active) return null;
 
       const width = Math.max(1, Math.round(host.value?.clientWidth ?? 0));
       const height = Math.max(320, Math.round(host.value?.clientHeight ?? 0));
@@ -378,7 +372,7 @@ function alignEngineToDate(date, { update = false } = {}) {
   const position = positionForDate(date);
   if (position < 0) return false;
   requestEngineFrames(3);
-  if (update && props.active && props.enabled) {
+  if (update && props.active) {
     syncPortraitGeometry(
       host.value?.clientWidth ?? lastWidth,
       host.value?.clientHeight ?? lastHeight,
@@ -493,7 +487,7 @@ async function turn(direction, targetDate, commitNavigation) {
   const token = ++transitionEpoch;
   setBusy(true);
   try {
-    if (!props.enabled || prefersReducedMotion()) {
+    if (prefersReducedMotion()) {
       return await commitWithoutAnimation(targetDate, commitNavigation, token);
     }
 
@@ -693,13 +687,12 @@ watch(
 );
 
 watch(
-  () => [props.enabled, props.active],
-  ([enabled, active]) => {
-    if (!enabled || !active) {
+  () => props.active,
+  (active) => {
+    if (!active) {
       if (busy.value || phase.value !== "idle") cancelPendingTurn();
       return;
     }
-    bookMounted.value = true;
     void nextTick().then(async () => {
       const engine = await ensureEngine();
       if (!engine) return;
@@ -715,7 +708,7 @@ onMounted(() => {
   window.addEventListener("touchcancel", endSwipe);
   resizeObserver = new ResizeObserver(refreshEngineLayout);
   if (host.value) resizeObserver.observe(host.value);
-  if (props.enabled && props.active) void ensureEngine();
+  if (props.active) void ensureEngine();
 });
 
 onBeforeUnmount(() => {
@@ -764,7 +757,7 @@ defineExpose({
     ref="host"
     class="day-flipbook"
     :class="{ 'day-flipbook--turning': busy }"
-    :data-page-transition="enabled ? 'flipbook' : 'classic'"
+    data-page-transition="flipbook"
     :data-flipbook-phase="phase"
     :data-engine-instance="engineInstanceId || undefined"
     :aria-busy="busy"
@@ -774,20 +767,19 @@ defineExpose({
     @touchstart.passive="handleTouchStart"
     @touchmove.passive="handleTouchMove"
   >
-    <div v-if="!enabled || engineUnavailable" class="day-flipbook__classic">
+    <div v-if="engineUnavailable" class="day-flipbook__fallback">
       <slot :date="selectedDate" :active="active" />
     </div>
 
     <div
-      v-if="bookMounted"
-      v-show="enabled && !engineUnavailable"
+      v-show="!engineUnavailable"
       ref="book"
       class="stpageflip-book"
       data-flipbook-engine="stpageflip"
       :data-engine-ready="engineReady"
       :data-page-count="pageEntries.length"
-      :aria-hidden="!active || !enabled"
-      :inert="!active || !enabled || undefined"
+      :aria-hidden="!active"
+      :inert="!active || undefined"
     >
       <div
         v-for="entry in pageEntries"
@@ -797,13 +789,13 @@ defineExpose({
         data-density="soft"
         :data-page-position="entry.position"
         :data-page-date="entry.date"
-        :aria-hidden="!active || !enabled || entry.date !== selectedDate"
-        :inert="!active || !enabled || entry.date !== selectedDate || undefined"
+        :aria-hidden="!active || entry.date !== selectedDate"
+        :inert="!active || entry.date !== selectedDate || undefined"
       >
         <slot
-          v-if="enabled && !engineUnavailable"
+          v-if="!engineUnavailable"
           :date="entry.date"
-          :active="active && enabled && entry.date === selectedDate"
+          :active="active && entry.date === selectedDate"
         />
       </div>
     </div>
@@ -812,7 +804,7 @@ defineExpose({
 
 <style scoped>
 .day-flipbook,
-.day-flipbook__classic,
+.day-flipbook__fallback,
 .stpageflip-book {
   height: 100%;
   inset: 0;
@@ -820,7 +812,7 @@ defineExpose({
   width: 100%;
 }
 
-.day-flipbook__classic {
+.day-flipbook__fallback {
   z-index: 1;
 }
 

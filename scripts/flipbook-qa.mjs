@@ -67,13 +67,6 @@ async function openDrawer() {
   await page.waitForTimeout(320);
 }
 
-async function selectTransition(name) {
-  const radio = page.getByRole("radio", { name });
-  await radio.click();
-  assert.equal(await radio.isChecked(), true);
-  await page.waitForTimeout(1_250);
-}
-
 async function openDay(date) {
   await page.goto(routeUrl(`/day/${date}`), { waitUntil: "networkidle" });
   await page.locator(`.day-page[data-page-date="${date}"]`).waitFor();
@@ -81,8 +74,8 @@ async function openDay(date) {
 
 async function assertDate(day) {
   const activePage = page.locator('[data-day-flipbook-source][aria-hidden="false"] .date-numeral');
-  const classicPage = page.locator(".day-flipbook__classic .date-numeral");
-  const locator = await activePage.count() ? activePage : classicPage;
+  const fallbackPage = page.locator(".day-flipbook__fallback .date-numeral");
+  const locator = await activePage.count() ? activePage : fallbackPage;
   assert.equal((await locator.textContent())?.trim(), day);
 }
 
@@ -454,8 +447,9 @@ async function assertSettledTurn(expectedDate) {
 
 try {
   await openSettings();
-  assert.equal(await page.getByRole("radio", { name: "原有翻页" }).isChecked(), true);
-  await selectTransition("3D 翻书");
+  assert.equal(await page.getByRole("heading", { name: "翻页效果" }).count(), 0);
+  assert.equal(await page.getByRole("radio", { name: "原有翻页" }).count(), 0);
+  assert.equal(await page.getByRole("radio", { name: "3D 翻书" }).count(), 0);
 
   await openDay("2026-07-30");
   const root = page.locator(".day-flipbook");
@@ -467,7 +461,6 @@ try {
   await assertSingleAccessibleDayPage("2026-07-30");
   await assertNoDuplicateIds();
   await rememberEngineIdentity();
-  const engineInstance = await root.getAttribute("data-engine-instance");
 
   await startTurnAudit("2026-07-30", "2026-07-31");
   await swipeDayLeft();
@@ -512,27 +505,8 @@ try {
 
   for (const width of [360, 390, 430]) await assertNoHorizontalOverflow(width);
 
-  await openDrawer();
-  await page.getByText("设置", { exact: true }).dispatchEvent("click");
-  await page.locator("#settings-title").waitFor();
-  await selectTransition("原有翻页");
-  await page.getByRole("button", { name: "返回" }).click();
-  await page.locator(".day-flipbook__classic .day-page").waitFor();
-  const classicPages = await assertSingleAccessibleDayPage("2026-07-30");
-  assert.equal(classicPages.total, 1);
-  assert.equal(await root.getAttribute("data-engine-instance"), engineInstance);
-
-  await page.getByRole("button", { name: "后一天" }).click();
-  await page.waitForTimeout(700);
-  assert.equal(new URL(page.url()).pathname, "/day/2026-07-31");
-
-  await openDrawer();
-  await page.getByText("设置", { exact: true }).dispatchEvent("click");
-  await page.locator("#settings-title").waitFor();
-  await selectTransition("3D 翻书");
-  await page.getByRole("button", { name: "返回" }).click();
-  await engine.waitFor({ state: "visible" });
-  assert.equal(await root.getAttribute("data-engine-instance"), engineInstance);
+  await clickDayAndWait("后一天");
+  await assertSettledTurn("2026-07-31");
   await assertFullBook("2026-07-31");
   await assertSingleAccessibleDayPage("2026-07-31");
   await assertEngineIdentity();

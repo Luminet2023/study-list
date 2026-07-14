@@ -1,6 +1,5 @@
 <script setup>
 import {
-  Transition as VueTransition,
   computed,
   defineAsyncComponent,
   nextTick,
@@ -36,7 +35,6 @@ import {
 import { PRIZE_DEFINITIONS } from "./domain/raffle.js";
 import { quoteForDate } from "./data/quotes.js";
 import { fetchUniqueHitokoto } from "./services/hitokoto.js";
-import { DAY_PAGE_TRANSITION } from "./lib/dayPageTransition.js";
 import { resolveRouteSelectedDate } from "./router/routeState.js";
 import {
   initializeCampaignStore,
@@ -69,7 +67,6 @@ const viewMode = ref(route.meta.viewMode ?? "day");
 const priorView = ref("day");
 const statsReference = ref(null);
 const returnDate = ref(null);
-const pageDirection = ref("page-next");
 const dayFlipbook = ref(null);
 const dayTurnBusy = ref(false);
 const dayTurnEarState = ref(null);
@@ -175,19 +172,6 @@ const fontFamily = computed(() => {
     ? value
     : "lxgw-wenka";
 });
-const dayPageTransition = computed(() =>
-  store.state.preferences?.dayPageTransition === DAY_PAGE_TRANSITION.FLIPBOOK
-    ? DAY_PAGE_TRANSITION.FLIPBOOK
-    : DAY_PAGE_TRANSITION.CLASSIC,
-);
-const dayTransitionComponent = computed(() =>
-  dayPageTransition.value === DAY_PAGE_TRANSITION.CLASSIC ? VueTransition : "div",
-);
-const dayTransitionBindings = computed(() =>
-  dayPageTransition.value === DAY_PAGE_TRANSITION.CLASSIC
-    ? { name: pageDirection.value, mode: "out-in" }
-    : { class: "day-flipbook-static" },
-);
 const cloudSyncTitle = computed(() => {
   if (!auth.user.value) return "通过 Linux DO 登录";
   if (syncControls.value?.baselineConflict.value) return "同步进度等待确认";
@@ -420,10 +404,9 @@ async function commitDateNavigation(next) {
 function navigateDate(delta) {
   const next = campaignDates[selectedIndex.value + delta];
   if (!next || dayTurnBusy.value) return;
-  pageDirection.value = delta > 0 ? "page-next" : "page-prev";
   const direction = delta > 0 ? "next" : "previous";
   const navigation =
-    dayPageTransition.value === DAY_PAGE_TRANSITION.FLIPBOOK && dayFlipbook.value
+    dayFlipbook.value
       ? dayFlipbook.value.turn(direction, next, () => commitDateNavigation(next))
       : commitDateNavigation(next);
   void Promise.resolve(navigation).catch((error) => {
@@ -434,7 +417,6 @@ function navigateDate(delta) {
 function advanceFromDay() {
   if (dayTurnBusy.value) return;
   if (selectedDate.value === CAMPAIGN_END) {
-    pageDirection.value = "page-next";
     statsReference.value = null;
     returnDate.value = null;
     void router.push(routeLocation("ending"));
@@ -449,7 +431,6 @@ function selectDate(date) {
     return;
   }
   dayFlipbook.value?.cancelPendingTurn?.();
-  pageDirection.value = date > selectedDate.value ? "page-next" : "page-prev";
   statsReference.value = null;
   returnDate.value = null;
   store.setSelectedDate(date);
@@ -1310,41 +1291,38 @@ onMounted(async () => {
           :active="viewMode === 'day'"
           :dates="campaignDates"
           :selected-date="selectedDate"
-          :enabled="dayPageTransition === DAY_PAGE_TRANSITION.FLIPBOOK"
           @navigate="navigateDate"
           @update:busy="handleDayTurnBusy"
-          @animation-error="enqueue('3D 翻页暂不可用，已回退到普通切换', 'error', 4200)"
+          @animation-error="enqueue('3D 翻页暂不可用，已直接完成日期切换', 'error', 4200)"
         >
           <template #default="{ date, active }">
-            <component :is="dayTransitionComponent" v-bind="dayTransitionBindings">
-              <DayPage
-                v-memo="[
-                  active,
-                  dayPageModel(date),
-                  active ? hitokotoLoading : false,
-                  active ? hitokotoError : '',
-                ]"
-                :date="date"
-                :active="active"
-                :page="dayPageModel(date)"
-                :quote-loading="active && hitokotoLoading"
-                :quote-error="active ? hitokotoError : ''"
-                @copy-quote="copyText(quoteForDay(date)?.text, '今日赠语已复制')"
-                @toggle-quote="toggleQuoteForDate(date)"
-                @retry-quote="active && retryHitokoto()"
-                @open-week-stats="openWeekStats(date)"
-                @cycle="cycleDate(date, $event)"
-                @request-lock="requestGoalLockForDate(date)"
-                @unlock="undoGoalLockForDate(date)"
-                @update-item="store.updateItem(date, $event.slot, $event.value)"
-                @update-diary="store.updateJournal(date, $event)"
-                @update-saturday-item="store.updateSaturdayItem(date, $event.id, $event.value)"
-                @remove-saturday-item="store.removeSaturday(date, $event)"
-                @add-saturday-item="store.addSaturdayItem(date, $event)"
-                @add-saturday-items="store.addSaturdayItems(date, $event)"
-                @close-stats="date === selectedDate && closeSundayStats()"
-              />
-            </component>
+            <DayPage
+              v-memo="[
+                active,
+                dayPageModel(date),
+                active ? hitokotoLoading : false,
+                active ? hitokotoError : '',
+              ]"
+              :date="date"
+              :active="active"
+              :page="dayPageModel(date)"
+              :quote-loading="active && hitokotoLoading"
+              :quote-error="active ? hitokotoError : ''"
+              @copy-quote="copyText(quoteForDay(date)?.text, '今日赠语已复制')"
+              @toggle-quote="toggleQuoteForDate(date)"
+              @retry-quote="active && retryHitokoto()"
+              @open-week-stats="openWeekStats(date)"
+              @cycle="cycleDate(date, $event)"
+              @request-lock="requestGoalLockForDate(date)"
+              @unlock="undoGoalLockForDate(date)"
+              @update-item="store.updateItem(date, $event.slot, $event.value)"
+              @update-diary="store.updateJournal(date, $event)"
+              @update-saturday-item="store.updateSaturdayItem(date, $event.id, $event.value)"
+              @remove-saturday-item="store.removeSaturday(date, $event)"
+              @add-saturday-item="store.addSaturdayItem(date, $event)"
+              @add-saturday-items="store.addSaturdayItems(date, $event)"
+              @close-stats="date === selectedDate && closeSundayStats()"
+            />
           </template>
         </DayFlipbook>
       </section>
@@ -1425,11 +1403,9 @@ onMounted(async () => {
         <section v-else-if="viewMode === 'settings'" key="settings" class="view-stage paper-surface">
           <SettingsView
             :model-value="fontFamily"
-            :day-page-transition="dayPageTransition"
             :quote-source="quoteSource"
             :hitokoto-categories="hitokotoCategories"
             @update:model-value="store.setFontFamily"
-            @update:day-page-transition="store.setDayPageTransition"
             @update:quote-source="store.setQuoteSource"
             @update:hitokoto-categories="store.setHitokotoCategories"
             @back="navigateView('day')"
@@ -1721,13 +1697,6 @@ onMounted(async () => {
 
 .day-stage {
   perspective: 1200px;
-}
-
-.day-flipbook-static {
-  height: 100%;
-  inset: 0;
-  position: absolute;
-  width: 100%;
 }
 
 .alternate-menu {
