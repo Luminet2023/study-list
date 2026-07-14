@@ -14,12 +14,17 @@ const props = defineProps({
     type: Array,
     default: () => [],
   },
+  minimalMode: {
+    type: Boolean,
+    default: false,
+  },
 });
 
 const emit = defineEmits([
   "update:modelValue",
   "update:quoteSource",
   "update:hitokotoCategories",
+  "disable-minimal-mode",
   "back",
 ]);
 
@@ -65,6 +70,10 @@ function toggleCategory(value, checked) {
   else categories.delete(value);
   emit("update:hitokotoCategories", [...categories]);
 }
+
+function updateMinimalMode(enabled) {
+  if (!enabled) emit("disable-minimal-mode");
+}
 </script>
 
 <template>
@@ -75,6 +84,35 @@ function toggleCategory(value, checked) {
     </v-toolbar>
 
     <div class="settings-content">
+      <template v-if="minimalMode">
+        <div class="section-heading">
+          <v-icon icon="mdi-feather" size="20" />
+          <div>
+            <h2>极简模式</h2>
+            <p>统计与同步状态入口已隐藏，后台同步仍会照常运行。</p>
+          </div>
+        </div>
+
+        <v-card class="minimal-mode-option" color="primary" variant="tonal">
+          <v-card-item>
+            <v-card-title>极简模式已开启</v-card-title>
+            <v-card-subtitle>日记可随时书写，目标留白时也能锁定。</v-card-subtitle>
+            <template #append>
+              <v-switch
+                :model-value="minimalMode"
+                aria-label="关闭极简模式"
+                color="primary"
+                hide-details
+                inset
+                @update:model-value="updateMinimalMode"
+              />
+            </template>
+          </v-card-item>
+        </v-card>
+
+        <v-divider class="settings-divider" />
+      </template>
+
       <div class="section-heading">
         <v-icon icon="mdi-format-font" size="20" />
         <div>
@@ -247,6 +285,14 @@ function toggleCategory(value, checked) {
   background: rgba(var(--v-theme-surface), 0.6);
   cursor: pointer;
   transition: border-color 160ms ease, background-color 160ms ease;
+}
+
+.minimal-mode-option {
+  margin-bottom: 8px;
+}
+
+.minimal-mode-option :deep(.v-card-item__append) {
+  align-self: center;
 }
 
 .source-option--active {

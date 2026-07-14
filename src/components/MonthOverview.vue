@@ -6,6 +6,10 @@ const props = defineProps({
     type: Array,
     default: () => [],
   },
+  minimalMode: {
+    type: Boolean,
+    default: false,
+  },
 });
 
 const emit = defineEmits(["select", "pinch-out"]);
@@ -179,7 +183,7 @@ watch(
               {{ monthTotals.completed }} / {{ monthTotals.total }} 项完成
             </v-card-subtitle>
             <template #append>
-              <v-chip size="small" variant="outlined" color="primary">
+              <v-chip v-if="!minimalMode" size="small" variant="outlined" color="primary">
                 {{ monthRate }}%
               </v-chip>
             </template>
@@ -233,7 +237,7 @@ watch(
         </div>
 
         <v-card
-          v-if="selectedDay"
+          v-if="selectedDay && !minimalMode"
           class="selected-day mx-1 mt-3"
           variant="outlined"
           elevation="0"

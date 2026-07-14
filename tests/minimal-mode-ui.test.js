@@ -1,0 +1,61 @@
+import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
+import test from "node:test";
+
+const readSource = (path) => readFile(new URL(path, import.meta.url), "utf8");
+
+test("minimal mode exposes a confirmed sidebar entry and settings exit", async () => {
+  const [app, settings] = await Promise.all([
+    readSource("../src/App.vue"),
+    readSource("../src/components/SettingsView.vue"),
+  ]);
+
+  assert.match(app, /v-if="!minimalMode"[^>]+title="极简模式"[^>]+@click="requestMinimalMode"/u);
+  assert.match(app, /<v-dialog v-model="minimalModeDialog"/u);
+  assert.match(app, /进入极简模式/u);
+  assert.match(settings, /aria-label="关闭极简模式"/u);
+  assert.match(settings, /emit\("disable-minimal-mode"\)/u);
+});
+
+test("minimal mode hides statistics and cloud surfaces without gating sync startup", async () => {
+  const [app, dayPage, editor] = await Promise.all([
+    readSource("../src/App.vue"),
+    readSource("../src/components/DayPage.vue"),
+    readSource("../src/components/MarkdownEditorDialog.vue"),
+  ]);
+
+  assert.match(app, /v-if="!minimalMode"[^>]+title="本周统计"/u);
+  assert.match(app, /v-if="!minimalMode"[^>]+title="总统计"/u);
+  assert.match(app, /v-if="!mdAndUp && !minimalMode"/u);
+  assert.match(app, /if \(user\) await startAuthenticatedSync\(user\)/u);
+  assert.match(dayPage, /page\.dayType !== 'sunday' && !minimalMode/u);
+  assert.match(editor, /<v-tooltip\s+v-if="!minimalMode"/u);
+});
+
+test("minimal mode removes the journal status chip", async () => {
+  const workday = await readSource("../src/components/WorkdayView.vue");
+
+  assert.match(workday, /<v-chip\s+v-if="!minimalMode"/u);
+  assert.doesNotMatch(workday, /极简模式，可随时书写/u);
+});
+
+test("minimal mode hides the favorites copy hint only through its prop", async () => {
+  const [app, favorites] = await Promise.all([
+    readSource("../src/App.vue"),
+    readSource("../src/components/FavoritesView.vue"),
+  ]);
+
+  assert.match(app, /<FavoritesView[\s\S]+?:minimal-mode="minimalMode"/u);
+  assert.match(favorites, /<p v-if="!minimalMode"[^>]*>[\s\S]*?轻触复制，让它陪你去往别处。/u);
+});
+
+test("minimal mode hides the month selected-day detail card", async () => {
+  const [app, month] = await Promise.all([
+    readSource("../src/App.vue"),
+    readSource("../src/components/MonthOverview.vue"),
+  ]);
+
+  assert.match(app, /<MonthOverview[\s\S]+?:minimal-mode="minimalMode"/u);
+  assert.match(month, /v-if="selectedDay && !minimalMode"/u);
+  assert.match(month, /<v-chip v-if="!minimalMode"[^>]*>[\s\S]*?\{\{ monthRate \}\}%/u);
+});

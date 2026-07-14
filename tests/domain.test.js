@@ -223,6 +223,19 @@ test("workday goal inputs gate the irreversible lock", () => {
   assert.throws(() => lockWorkdayGoals(createDefaultDay("2026-07-18")), /not a workday/);
 });
 
+test("minimal mode can explicitly lock a workday with blank goal inputs", () => {
+  const day = createDefaultDay(CAMPAIGN_START);
+  const locked = lockWorkdayGoals(
+    day,
+    "2026-07-13T08:00:00.000Z",
+    { allowIncomplete: true },
+  );
+
+  assert.equal(areWorkdayGoalInputsComplete(locked), false);
+  assert.equal(locked.goalsLocked, true);
+  assert.equal(locked.goalsLockedAt, "2026-07-13T08:00:00.000Z");
+});
+
 test("workday goals can be unlocked without losing content or status", () => {
   let day = createDefaultDay(CAMPAIGN_START);
   day = updateItemInput(day, 4, "必修一");
@@ -261,6 +274,23 @@ test("workday journal unlocks after every effective checkbox is settled", () => 
 
   state.raffle.awards = [{ targets: [{ date: CAMPAIGN_START, slots: [8] }] }];
   assert.equal(isWorkdayJournalUnlocked(day, state), true);
+});
+
+test("minimal mode unlocks a workday journal without changing the normal gate", () => {
+  const workday = createDefaultDay(CAMPAIGN_START);
+  const saturday = createDefaultDay("2026-07-18");
+
+  assert.equal(isWorkdayJournalUnlocked(workday, createDefaultState()), false);
+  assert.equal(isWorkdayJournalUnlocked(
+    workday,
+    createDefaultState(),
+    { minimalMode: true },
+  ), true);
+  assert.equal(isWorkdayJournalUnlocked(
+    saturday,
+    createDefaultState(),
+    { minimalMode: true },
+  ), false);
 });
 
 test("missed workday goals are settled and allow journal entry", () => {

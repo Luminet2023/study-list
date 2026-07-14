@@ -77,6 +77,7 @@ const pendingDrawMode = ref(null);
 const slot6Dialog = ref(false);
 const goalLockDialog = ref(false);
 const goalLockDate = ref(null);
+const minimalModeDialog = ref(false);
 const rulesDialog = ref(false);
 const awardSlot6Confirmation = ref(null);
 const redeemingDrawId = ref(null);
@@ -172,6 +173,7 @@ const fontFamily = computed(() => {
     ? value
     : "lxgw-wenka";
 });
+const minimalMode = computed(() => store.state.preferences?.minimalMode === true);
 const cloudSyncTitle = computed(() => {
   if (!auth.user.value) return "通过 Linux DO 登录";
   if (syncControls.value?.baselineConflict.value) return "同步进度等待确认";
@@ -452,6 +454,28 @@ function navigateView(mode) {
   void router.push(routeLocation(mode));
 }
 
+function requestMinimalMode() {
+  drawer.value = mdAndUp.value;
+  if (minimalMode.value) {
+    navigateView("settings");
+    return;
+  }
+  minimalModeDialog.value = true;
+}
+
+function confirmMinimalMode() {
+  store.setMinimalMode(true);
+  minimalModeDialog.value = false;
+  mobileCloudMenu.value = false;
+  if (["week-stats", "total"].includes(viewMode.value)) navigateView("day");
+  enqueue("已进入极简模式，可在设置页关闭", "secondary", 3600);
+}
+
+function disableMinimalMode() {
+  store.setMinimalMode(false);
+  enqueue("已退出极简模式", "outline");
+}
+
 function openWeekStats(date = selectedDate.value) {
   dayFlipbook.value?.cancelPendingTurn?.();
   const week = getCampaignWeek(date);
@@ -526,7 +550,7 @@ const goalPreviewItems = computed(() =>
 );
 
 function requestGoalLockForDate(date) {
-  if (!areWorkdayGoalInputsComplete(store.state.days?.[date])) {
+  if (!minimalMode.value && !areWorkdayGoalInputsComplete(store.state.days?.[date])) {
     enqueue("请先填写第 4、7 项留白；第 6 项可以留空", "outline");
     return;
   }
@@ -541,7 +565,10 @@ function closeGoalLockDialog() {
 
 function confirmGoalLock() {
   if (!goalLockDate.value || !store.lockGoals(goalLockDate.value)) {
-    enqueue("目标尚未填写完整，暂不能锁定", "error");
+    enqueue(
+      minimalMode.value ? "暂时无法锁定今日目标" : "目标尚未填写完整，暂不能锁定",
+      "error",
+    );
     return;
   }
   closeGoalLockDialog();
@@ -568,8 +595,9 @@ function cycleDate(date, slotOrId) {
   if (!store.cycleStatus(date, slot)) {
     enqueue(
       day?.type === DAY_TYPE.WORKDAY
-        && !(Boolean(day?.goalsLocked) && areWorkdayGoalInputsComplete(day))
-        ? "请先填写并锁定今日目标"
+        && !(Boolean(day?.goalsLocked)
+          && (minimalMode.value || areWorkdayGoalInputsComplete(day)))
+        ? (minimalMode.value ? "请先锁定今日目标" : "请先填写并锁定今日目标")
         : "该项已由转盘免除，并按完成统计",
       "secondary",
     );
@@ -794,9 +822,9 @@ function buildDayPageModel(date) {
     workdayItems: dayType === DAY_TYPE.WORKDAY ? store.workdayViewItems(date) : [],
     saturdayItems: dayType === DAY_TYPE.SATURDAY ? store.saturdayViewItems(date) : [],
     goalsReady,
-    goalsLocked: Boolean(day?.goalsLocked) && goalsReady,
+    goalsLocked: Boolean(day?.goalsLocked) && (minimalMode.value || goalsReady),
     journalUnlocked: dayType === DAY_TYPE.WORKDAY
-      ? isWorkdayJournalUnlocked(day, store.state)
+      ? isWorkdayJournalUnlocked(day, store.state, { minimalMode: minimalMode.value })
       : false,
     weekStats: dayType === DAY_TYPE.SUNDAY ? weekStatsForDate(date) : null,
     weekLabel: weekLabelForDate(date),
@@ -1102,16 +1130,36 @@ onMounted(async () => {
           <v-list-item :active="viewMode === 'day'" prepend-icon="mdi-calendar-today-outline" title="日视图" @click="navigateView('day')" />
           <v-list-item :active="viewMode === 'week'" prepend-icon="mdi-calendar-week-outline" title="周视图" @click="navigateView('week')" />
           <v-list-item :active="viewMode === 'month'" prepend-icon="mdi-calendar-month-outline" title="月视图" @click="navigateView('month')" />
-          <v-list-item :active="viewMode === 'week-stats'" prepend-icon="mdi-chart-timeline-variant" title="本周统计" @click="openCurrentWeekFromDrawer" />
-          <v-list-item :active="viewMode === 'total'" prepend-icon="mdi-chart-box-outline" title="总统计" @click="navigateView('total')" />
+          <v-list-item v-if="!minimalMode" :active="viewMode === 'week-stats'" prepend-icon="mdi-chart-timeline-variant" title="本周统计" @click="openCurrentWeekFromDrawer" />
+          <v-list-item v-if="!minimalMode" :active="viewMode === 'total'" prepend-icon="mdi-chart-box-outline" title="总统计" @click="navigateView('total')" />
           <v-list-item :active="viewMode === 'favorites'" prepend-icon="mdi-heart-multiple-outline" title="赠语收藏" @click="navigateView('favorites')" />
           <v-list-item :active="viewMode === 'raffle'" prepend-icon="mdi-dice-multiple-outline" title="摸鱼大转盘" @click="navigateView('raffle')" />
+          <v-list-item v-if="!minimalMode" prepend-icon="mdi-feather" title="极简模式" @click="requestMinimalMode" />
           <v-list-item :active="viewMode === 'settings'" prepend-icon="mdi-cog-outline" title="设置" @click="navigateView('settings')" />
         </v-list>
         <template #append>
           <div class="drawer-persistence">
             <v-list-item
-              v-if="auth.user.value"
+              v-if="auth.user.value && minimalMode"
+              class="cloud-account-item"
+              title="Linux DO 已登录"
+              :subtitle="cloudSyncSubtitle"
+            >
+              <template #prepend>
+                <v-icon icon="mdi-linux" />
+              </template>
+              <template #append>
+                <v-btn
+                  icon="mdi-logout-variant"
+                  variant="text"
+                  size="small"
+                  aria-label="退出 Linux DO"
+                  @click="logoutLinuxDo"
+                />
+              </template>
+            </v-list-item>
+            <v-list-item
+              v-else-if="auth.user.value"
               class="cloud-account-item"
               :title="cloudSyncTitle"
               :subtitle="cloudSyncSubtitle"
@@ -1167,7 +1215,7 @@ onMounted(async () => {
       />
 
       <v-menu
-        v-if="!mdAndUp"
+        v-if="!mdAndUp && !minimalMode"
         v-model="mobileCloudMenu"
         :close-on-content-click="false"
         location="top start"
@@ -1288,12 +1336,14 @@ onMounted(async () => {
               v-memo="[
                 active,
                 dayPageModel(date),
+                minimalMode,
                 active ? hitokotoLoading : false,
                 active ? hitokotoError : '',
               ]"
               :date="date"
               :active="active"
               :page="dayPageModel(date)"
+              :minimal-mode="minimalMode"
               :quote-loading="active && hitokotoLoading"
               :quote-error="active ? hitokotoError : ''"
               @copy-quote="copyText(quoteForDay(date)?.text, '今日赠语已复制')"
@@ -1335,6 +1385,7 @@ onMounted(async () => {
         <section v-else-if="viewMode === 'month'" key="month" class="view-stage paper-surface">
           <MonthOverview
             :days="monthDays"
+            :minimal-mode="minimalMode"
             @select="selectWeekFromMonth"
             @pinch-out="navigateView('week')"
           />
@@ -1362,6 +1413,7 @@ onMounted(async () => {
         <section v-else-if="viewMode === 'favorites'" key="favorites" class="view-stage paper-surface">
           <FavoritesView
             :favorites="store.favorites.value"
+            :minimal-mode="minimalMode"
             @copy="copyText($event.textSnapshot, '赠语已复制')"
             @unlike="store.unlikeQuote($event.quoteId)"
             @back="navigateView('day')"
@@ -1394,9 +1446,11 @@ onMounted(async () => {
             :model-value="fontFamily"
             :quote-source="quoteSource"
             :hitokoto-categories="hitokotoCategories"
+            :minimal-mode="minimalMode"
             @update:model-value="store.setFontFamily"
             @update:quote-source="store.setQuoteSource"
             @update:hitokoto-categories="store.setHitokotoCategories"
+            @disable-minimal-mode="disableMinimalMode"
             @back="navigateView('day')"
           />
         </section>
@@ -1557,6 +1611,26 @@ onMounted(async () => {
       </v-card>
     </v-dialog>
 
+    <v-dialog v-model="minimalModeDialog" max-width="440">
+      <v-card class="minimal-mode-card" color="surface" elevation="14">
+        <v-card-item prepend-icon="mdi-feather">
+          <v-card-title>进入极简模式？</v-card-title>
+        </v-card-item>
+
+        <v-divider />
+
+        <v-card-text class="minimal-mode-copy">
+          极简模式会隐藏所有不符合你心意的功能，文字，卡片，Chip！
+        </v-card-text>
+
+        <v-card-actions class="px-4 pb-4">
+          <v-spacer />
+          <v-btn variant="text" @click="minimalModeDialog = false">暂不进入</v-btn>
+          <v-btn color="primary" variant="flat" @click="confirmMinimalMode">进入极简模式</v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
+
     <v-dialog v-model="rulesDialog" max-width="560" scrollable>
       <v-card class="rules-card" color="surface" elevation="12">
         <v-card-item prepend-icon="mdi-book-open-variant-outline">
@@ -1579,7 +1653,9 @@ onMounted(async () => {
             <v-list-item
               prepend-icon="mdi-lock-check-outline"
               title="填写并锁定目标"
-              subtitle="工作日先填写第 4、7 项；第 6 项可留空。核对锁定后，已计划项目才可逐项勾选。"
+              :subtitle="minimalMode
+                ? '极简模式下目标留白时也可锁定；锁定后即可逐项勾选。'
+                : '工作日先填写第 4、7 项；第 6 项可留空。核对锁定后，已计划项目才可逐项勾选。'"
             />
             <v-list-item
               prepend-icon="mdi-check-circle-outline"
@@ -1589,7 +1665,9 @@ onMounted(async () => {
             <v-list-item
               prepend-icon="mdi-book-edit-outline"
               title="日记"
-              subtitle="当日有效目标均标记为完成或未完成后解锁，内容会自动保存在本地。"
+              :subtitle="minimalMode
+                ? '极简模式下日记可随时书写，内容会自动保存在本地。'
+                : '当日有效目标均标记为完成或未完成后解锁，内容会自动保存在本地。'"
             />
             <v-list-item
               prepend-icon="mdi-calendar-weekend-outline"
@@ -1793,6 +1871,16 @@ onMounted(async () => {
 .rules-card {
   max-height: min(82dvh, 680px);
   border: 1px solid rgba(var(--v-theme-outline), 0.32);
+}
+
+.minimal-mode-card {
+  background: rgb(var(--v-theme-surface)) !important;
+  border: 1px solid rgba(var(--v-theme-outline), 0.34);
+  isolation: isolate;
+}
+
+.minimal-mode-copy {
+  line-height: 1.85;
 }
 
 .rules-content {

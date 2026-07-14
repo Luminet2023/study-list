@@ -41,6 +41,10 @@ const props = defineProps({
     type: Boolean,
     default: false,
   },
+  minimalMode: {
+    type: Boolean,
+    default: false,
+  },
 });
 
 const emit = defineEmits([
@@ -230,7 +234,7 @@ const saveJournal = (value) => {
       <v-fade-transition mode="out-in">
         <div :key="goalsLocked ? 'locked' : goalsReady ? 'ready' : 'draft'" class="goal-gate px-4 mt-3">
           <v-alert
-            v-if="!goalsReady"
+            v-if="!goalsReady && !minimalMode"
             density="compact"
             icon="mdi-pencil-outline"
             text="请先填写第 4、7 项留白；第 6 项可留空，留空时不计入今日计划。"
@@ -293,6 +297,7 @@ const saveJournal = (value) => {
           <span>日记</span>
           <v-spacer />
           <v-chip
+            v-if="!minimalMode"
             :color="journalUnlocked ? 'primary' : undefined"
             size="x-small"
             variant="outlined"
@@ -324,6 +329,7 @@ const saveJournal = (value) => {
         v-model="journalDialog"
         :content="diary"
         :cloud-draft="cloudDraft"
+        :minimal-mode="minimalMode"
         @save="saveJournal"
         @update:cloud-draft="emit('update:cloud-draft', $event)"
       />

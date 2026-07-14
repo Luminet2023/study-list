@@ -6,6 +6,10 @@ const props = defineProps({
     type: Array,
     default: () => [],
   },
+  minimalMode: {
+    type: Boolean,
+    default: false,
+  },
 });
 
 const emit = defineEmits(["copy", "unlike", "back"]);
@@ -51,7 +55,7 @@ const formatLikedAt = (value) => {
       </v-toolbar-title>
     </v-toolbar>
 
-    <p class="view-caption px-4 mt-3 mb-4">
+    <p v-if="!minimalMode" class="view-caption px-4 mt-3 mb-4">
      轻触复制，让它陪你去往别处。
     </p>
 

@@ -22,8 +22,9 @@ When implementing from a selected generated mock, treat that image as the source
 - 新同步端点为跨源 `GET https://api.luminet.cn/hifumi/v1/sync/ws`，子协议固定为 `stella-sync-v1`；文本帧使用 JSON + Base64 信封 `{ version, requestId, type, protobuf }`，提示帧使用 `{ version, type: "sync_hint", baselineId, serverCursor, serverVersion }`，页面活动控制帧使用 `{ version, type: "activity", active }`。服务端必须独立校验文本信封大小、Base64 合法性与解码后的 Protobuf 大小。旧 `/api/*` Cloudflare 后端固定返回 `410 Gone`，新浏览器不得自动回退 HTTP。
 - 每个本地 campaign 首次初始化时生成独立的基线 ID。同基线按版本游标自动增量合并；异基线必须暂停自动同步，展示本地与云端最近更改时间和进度日期，由用户选择覆盖方向并二次确认。覆盖请求必须携带预期服务端基线与版本进行 CAS 校验，避免确认期间覆盖更新后的云端数据。
 - 云端快照必须是相对默认空白数据库的稀疏记录；空数据库为 0 条记录、进度停在 2026-07-13。`server version` 是每个基线的逻辑同步批次版本，不得直接显示逐记录递增的 cursor；更换基线时该基线的 cursor 与逻辑版本重新计数。
-- 移动端侧边栏隐藏时，左下角固定显示云同步状态 `v-fab`；同步中使用进度环，其余状态使用云端图标。点击 FAB 从上方打开紧凑 `v-menu` 查看同步状态、最近同步时间和 Linux DO 账号操作；`mdAndUp` 桌面端继续只在侧边栏显示，不重复渲染 FAB。
+- 非极简模式下，移动端侧边栏隐藏时，左下角固定显示云同步状态 `v-fab`；同步中使用进度环，其余状态使用云端图标。点击 FAB 从上方打开紧凑 `v-menu` 查看同步状态、最近同步时间和 Linux DO 账号操作；`mdAndUp` 桌面端继续只在侧边栏显示，不重复渲染 FAB。极简模式隐藏 FAB 与同步状态展示，但 Linux DO 登录/退出和后台同步保持可用。
 - 应用以 PWA 方式提供安装与离线启动：构建期生成带内容版本号的 Service Worker 预缓存清单，静态页面与资源可缓存，但同源开发路径 `/v1/` 与退役路径 `/api/` 必须始终绕过 Service Worker，生产 API 跨源直连 `https://api.luminet.cn/hifumi/`，避免 OAuth、Session 和同步响应进入 Cache Storage。PWA 图标沿用暖色宣纸、深梅色笔尖与朱红印记的视觉语言，并保留 maskable 安全区。
 - 生产前端同时发布在 `https://stellafortuna.hifumi.luminet.cn/` 与 `https://stellafortuna.luminet.cn/`；所有 API 请求使用 `credentials: "include"`，页面采用 `strict-origin-when-cross-origin` Referer 策略，服务端须精确校验这两个 Origin/Referer。
-- 日记编辑器为每个日期维护独立的 `journalDraft` 云草稿记录；输入后先进入本地批量保存与云同步队列，编辑器内提供云图标用于立即写入。再次打开时优先恢复草稿，正式保存日记后清除对应草稿；草稿不得计入学习进度或日记统计。
+- 日记编辑器为每个日期维护独立的 `journalDraft` 云草稿记录；输入后先进入本地批量保存与云同步队列，非极简模式下编辑器内提供云图标用于立即写入。极简模式仅隐藏该图标，自动保存逻辑保持不变。再次打开时优先恢复草稿，正式保存日记后清除对应草稿；草稿不得计入学习进度或日记统计。
 - 日记编辑器只提供纯文本输入，不提供格式工具栏、编辑/预览切换或编辑器内富文本预览；历史 Markdown 数据仍按原样保存并兼容现有只读展示。
+- 极简模式是仅保存在当前浏览器的 UI 偏好，不新增云同步记录。首次从侧边栏进入时必须确认；开启后侧边栏隐藏“极简模式”项目，退出入口只保留在设置页。开启后还需隐藏侧边栏的本周/总统计入口、所有云同步状态组件、移动端云同步 FAB、日页“本周统计”按钮、日记状态 Chip、日记编辑器云图标、月视图百分比 Chip 与所选日期详情卡片，以及赠语收藏页“轻触复制，让它陪你去往别处。”提示；Linux DO 登录与后台同步照常运行。极简模式允许工作日日记随时填写，也允许第 4、7 项留白时锁定目标；退出时必须解除所有未填写完整的工作日锁定，恢复普通模式校验。

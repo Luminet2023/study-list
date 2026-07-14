@@ -73,6 +73,7 @@ function defaultState(baselineId = createBaselineId()) {
       fontFamily: "lxgw-wenka",
       quoteSource: "native",
       hitokotoCategories: [],
+      minimalMode: false,
     },
     raffle: {
       ...base.raffle,
@@ -81,7 +82,7 @@ function defaultState(baselineId = createBaselineId()) {
   };
 }
 
-function mergeDay(baseDay, storedDay) {
+function mergeDay(baseDay, storedDay, allowIncompleteGoalLock = false) {
   if (!storedDay || typeof storedDay !== "object") return baseDay;
   const storedItems = Array.isArray(storedDay.items) ? storedDay.items : [];
   const items = baseDay.items.map((baseItem) => {
@@ -100,6 +101,7 @@ function mergeDay(baseDay, storedDay) {
   if (
     merged.type === DAY_TYPE.WORKDAY &&
     merged.goalsLocked &&
+    !allowIncompleteGoalLock &&
     !areWorkdayGoalInputsComplete(merged)
   ) {
     return { ...merged, goalsLocked: false, goalsLockedAt: null };
@@ -117,7 +119,7 @@ function normalizeState(input) {
   const days = Object.fromEntries(
     Object.entries(base.days).map(([date, day]) => [
       date,
-      mergeDay(day, incoming.days?.[date]),
+      mergeDay(day, incoming.days?.[date], incomingPreferences.minimalMode === true),
     ]),
   );
   return {
@@ -134,6 +136,7 @@ function normalizeState(input) {
       ...incomingPreferences,
       quoteSource: normalizeQuoteSource(incoming.preferences?.quoteSource),
       hitokotoCategories: normalizeHitokotoCategories(incoming.preferences?.hitokotoCategories),
+      minimalMode: incoming.preferences?.minimalMode === true,
     },
     raffle: {
       ...base.raffle,
@@ -172,11 +175,22 @@ function notifyChangeListeners() {
   for (const listener of changeListeners) listener();
 }
 
-function replaceState(nextState) {
+function replaceState(nextState, { preserveMinimalMode = false } = {}) {
   const selectedDate = state.preferences?.selectedDate;
+  const minimalMode = state.preferences?.minimalMode === true;
   suppressPersistence = true;
-  const normalized = normalizeState(nextState);
+  const normalizationInput = preserveMinimalMode
+    ? {
+        ...(nextState ?? {}),
+        preferences: {
+          ...(nextState?.preferences ?? {}),
+          minimalMode,
+        },
+      }
+    : nextState;
+  const normalized = normalizeState(normalizationInput);
   if (selectedDate) normalized.preferences.selectedDate = clampCampaignDate(selectedDate);
+  if (preserveMinimalMode) normalized.preferences.minimalMode = minimalMode;
   for (const key of Object.keys(state)) delete state[key];
   Object.assign(state, normalized);
   suppressPersistence = false;
@@ -279,6 +293,7 @@ watch(
     fontFamily: state.preferences?.fontFamily,
     quoteSource: state.preferences?.quoteSource,
     hitokotoCategories: state.preferences?.hitokotoCategories,
+    minimalMode: state.preferences?.minimalMode,
     raffle: state.raffle,
   }),
   schedulePersistence,
@@ -333,7 +348,7 @@ export async function initializeCampaignStore() {
 }
 
 async function replaceFromSync(nextState) {
-  replaceState(nextState);
+  replaceState(nextState, { preserveMinimalMode: true });
   dirty = true;
   pendingSave.value = true;
   return flushPersistence();
@@ -342,11 +357,12 @@ async function replaceFromSync(nextState) {
 function createCleanSyncState(baselineId) {
   const clean = defaultState(baselineId);
   clean.preferences.selectedDate = state.preferences?.selectedDate ?? clean.preferences.selectedDate;
+  clean.preferences.minimalMode = state.preferences?.minimalMode === true;
   return normalizeState(clean);
 }
 
 function replaceFromPersistedSync(nextState) {
-  replaceState(nextState);
+  replaceState(nextState, { preserveMinimalMode: true });
 }
 
 function subscribeToPersistence(listener) {
@@ -382,6 +398,27 @@ function setHitokotoCategories(categories) {
   state.preferences.hitokotoCategories = normalizeHitokotoCategories(categories);
 }
 
+function isMinimalModeEnabled() {
+  return state.preferences?.minimalMode === true;
+}
+
+function setMinimalMode(enabled) {
+  const next = enabled === true;
+  if (state.preferences.minimalMode === next) return;
+  state.preferences.minimalMode = next;
+  if (next) return;
+
+  for (const [date, day] of Object.entries(state.days ?? {})) {
+    if (
+      day?.type === DAY_TYPE.WORKDAY
+      && day.goalsLocked
+      && !areWorkdayGoalInputsComplete(day)
+    ) {
+      state.days[date] = unlockWorkdayGoals(day);
+    }
+  }
+}
+
 function boundHitokotoUuids(excludeDate = null) {
   return new Set(
     Object.entries(state.days ?? {})
@@ -397,7 +434,7 @@ function cycleStatus(date, slot) {
   if (!day || !item) return false;
   if (
     day.type === DAY_TYPE.WORKDAY &&
-    (!day.goalsLocked || !areWorkdayGoalInputsComplete(day))
+    (!day.goalsLocked || (!isMinimalModeEnabled() && !areWorkdayGoalInputsComplete(day)))
   ) {
     return false;
   }
@@ -411,7 +448,7 @@ function updateItem(date, slot, value) {
   const day = getDay(date);
   const lockIsValid =
     day?.type !== DAY_TYPE.WORKDAY ||
-    (day.goalsLocked && areWorkdayGoalInputsComplete(day));
+    (day.goalsLocked && (isMinimalModeEnabled() || areWorkdayGoalInputsComplete(day)));
   if (
     !day ||
     (day.type === DAY_TYPE.WORKDAY && lockIsValid)
@@ -440,7 +477,11 @@ function updateItem(date, slot, value) {
 function updateJournal(date, value) {
   const day = getDay(date);
   if (!day) return false;
-  if (day.type === DAY_TYPE.WORKDAY && !isWorkdayJournalUnlocked(day, state)) {
+  if (day.type === DAY_TYPE.WORKDAY && !isWorkdayJournalUnlocked(
+    day,
+    state,
+    { minimalMode: isMinimalModeEnabled() },
+  )) {
     return false;
   }
   state.days[date] = { ...day, journal: String(value ?? "") };
@@ -450,7 +491,11 @@ function updateJournal(date, value) {
 function updateJournalDraft(date, value) {
   const day = getDay(date);
   if (!day) return false;
-  if (day.type === DAY_TYPE.WORKDAY && !isWorkdayJournalUnlocked(day, state)) {
+  if (day.type === DAY_TYPE.WORKDAY && !isWorkdayJournalUnlocked(
+    day,
+    state,
+    { minimalMode: isMinimalModeEnabled() },
+  )) {
     return false;
   }
   state.days[date] = { ...day, journalDraft: String(value ?? "") };
@@ -460,8 +505,13 @@ function updateJournalDraft(date, value) {
 function lockGoals(date) {
   const day = getDay(date);
   if (!day || day.type !== DAY_TYPE.WORKDAY) return false;
-  if (!areWorkdayGoalInputsComplete(day)) return false;
-  state.days[date] = lockWorkdayGoals(day, new Date().toISOString());
+  const allowIncomplete = isMinimalModeEnabled();
+  if (!allowIncomplete && !areWorkdayGoalInputsComplete(day)) return false;
+  state.days[date] = lockWorkdayGoals(
+    day,
+    new Date().toISOString(),
+    { allowIncomplete },
+  );
   return true;
 }
 
@@ -702,6 +752,7 @@ export function useCampaignStore() {
     setFontFamily,
     setQuoteSource,
     setHitokotoCategories,
+    setMinimalMode,
     boundHitokotoUuids,
     bindHitokoto,
     cycleStatus,

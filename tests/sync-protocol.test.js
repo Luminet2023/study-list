@@ -183,6 +183,19 @@ test("page navigation is local-only and does not create a cloud diff", () => {
   assert.deepEqual(diffRecords(before, after), []);
 });
 
+test("minimal mode is a local-only preference and does not change cloud records", () => {
+  const state = createDefaultState();
+  state.preferences = {
+    fontFamily: "lxgw-wenka",
+    minimalMode: false,
+  };
+  const before = stateToRecords(state);
+  state.preferences.minimalMode = true;
+  const after = stateToRecords(state);
+
+  assert.deepEqual(diffRecords(before, after), []);
+});
+
 test("hitokoto preferences and per-day binding round-trip through cloud records", () => {
   const beforeState = createDefaultState();
   beforeState.preferences = {

@@ -18,6 +18,10 @@ const props = defineProps({
     type: String,
     default: "",
   },
+  minimalMode: {
+    type: Boolean,
+    default: false,
+  },
 });
 
 const emit = defineEmits(["update:modelValue", "save", "update:cloudDraft"]);
@@ -174,6 +178,7 @@ function save() {
         <div class="editor-pane">
           <div class="markdown-input-surface">
             <v-tooltip
+              v-if="!minimalMode"
               :text="cloudDraftLabel"
               content-class="markdown-editor-tooltip"
               location="top"

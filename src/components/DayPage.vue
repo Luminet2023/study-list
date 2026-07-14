@@ -25,6 +25,10 @@ defineProps({
     type: String,
     default: "",
   },
+  minimalMode: {
+    type: Boolean,
+    default: false,
+  },
 });
 
 defineEmits([
@@ -82,7 +86,7 @@ defineEmits([
         </VAlert>
       </VFadeTransition>
 
-      <div v-if="page.dayType !== 'sunday'" class="week-jump-wrap">
+      <div v-if="page.dayType !== 'sunday' && !minimalMode" class="week-jump-wrap">
         <v-btn
           size="small"
           variant="text"
@@ -103,6 +107,7 @@ defineEmits([
         :goals-ready="page.goalsReady"
         :goals-locked="page.goalsLocked"
         :journal-unlocked="page.journalUnlocked"
+        :minimal-mode="minimalMode"
         @cycle="$emit('cycle', $event)"
         @request-lock="$emit('request-lock')"
         @unlock="$emit('unlock')"
