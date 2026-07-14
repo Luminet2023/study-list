@@ -21,8 +21,9 @@ const book = ref(null);
 const overlayVisible = ref(false);
 const busy = ref(false);
 
-let jquery = null;
-let turnModulePromise = null;
+let flipbookEngine = null;
+let flipbookEnginePromise = null;
+let flipbookEventHandler = null;
 let finishActiveTurn = null;
 let destroyed = false;
 
@@ -35,19 +36,14 @@ function prefersReducedMotion() {
   return globalThis.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches ?? false;
 }
 
-async function loadTurnJs() {
-  if (!turnModulePromise) {
-    turnModulePromise = Promise.all([
-      import("jquery"),
-      import("@jaminearth/turn"),
-    ]).then(([jqueryModule, turnModule]) => {
-      const instance = jqueryModule.default ?? jqueryModule;
-      if (typeof instance.fn?.turn !== "function") turnModule.turnjsInit(instance);
-      return instance;
-    });
+async function loadFlipbookEngine() {
+  if (!flipbookEnginePromise) {
+    flipbookEnginePromise = Promise.all([
+      import("@strata-packages/flipbook"),
+      import("@strata-packages/flipbook/css"),
+    ]).then(([flipbookModule]) => flipbookModule.default ?? flipbookModule);
   }
-  jquery = await turnModulePromise;
-  return jquery;
+  return flipbookEnginePromise;
 }
 
 function copyLiveControlState(source, clone) {
@@ -88,7 +84,7 @@ function createSnapshot(source) {
 
 function wrapSnapshot(snapshot) {
   const page = document.createElement("div");
-  page.className = "turn-flipbook-page paper-surface";
+  page.className = "day-flipbook-page paper-surface";
   page.setAttribute("aria-hidden", "true");
   page.setAttribute("inert", "");
   page.append(snapshot);
@@ -101,16 +97,31 @@ function restoreSnapshotScrollPositions() {
   }
 }
 
+function revealDestinationUnderlay(engineHost, direction, destinationPage) {
+  const selector = direction === "previous"
+    ? ".st-flipbook-page-right"
+    : ".st-flipbook-page-left";
+  const underlay = engineHost.querySelector(selector);
+  if (!underlay) return;
+  underlay.replaceChildren(destinationPage.cloneNode(true));
+  underlay.setAttribute("data-st-flip-blank", "false");
+}
+
 function cleanupBook() {
   finishActiveTurn = null;
-  if (jquery && book.value) {
+  if (flipbookEngine && flipbookEventHandler) {
+    flipbookEngine.off("flip", flipbookEventHandler);
+  }
+  flipbookEventHandler = null;
+  if (flipbookEngine) {
     try {
-      const data = jquery(book.value).data();
-      if (data?.pages && !data.destroying) jquery(book.value).turn("destroy");
+      flipbookEngine.destroy();
     } catch {
-      // turn.js may already have torn down its generated wrappers.
+      // The transient engine may already have completed its own teardown.
     }
   }
+  flipbookEngine = null;
+  book.value?.removeAttribute("data-engine-ready");
   book.value?.replaceChildren();
   overlayVisible.value = false;
 }
@@ -135,9 +146,9 @@ async function turn(direction, commitNavigation) {
       return true;
     }
 
-    let $;
+    let createFlipbook;
     try {
-      $ = await loadTurnJs();
+      createFlipbook = await loadFlipbookEngine();
     } catch (error) {
       await commitNavigation();
       emit("animation-error", error);
@@ -163,11 +174,13 @@ async function turn(direction, commitNavigation) {
     if (destroyed || !nextPage || !book.value || !host.value) return true;
     const nextSnapshot = createSnapshot(nextPage);
     const ordered = orderFlipbookPages(direction, previousSnapshot, nextSnapshot);
-    book.value.replaceChildren(...ordered.pages.map(wrapSnapshot));
+    const pages = ordered.pages.map(wrapSnapshot);
+    const engineHost = document.createElement("div");
+    engineHost.className = "strata-flipbook-engine";
+    engineHost.dataset.flipbookEngine = "strata";
+    engineHost.style.setProperty("--st-flip-duration", `${Math.max(120, props.duration)}ms`);
+    book.value.replaceChildren(engineHost);
 
-    const rect = host.value.getBoundingClientRect();
-    const width = Math.max(1, Math.round(rect.width));
-    const height = Math.max(1, Math.round(rect.height));
     overlayVisible.value = true;
     await nextTick();
 
@@ -186,33 +199,51 @@ async function turn(direction, commitNavigation) {
       finishActiveTurn = finish;
 
       try {
-        $(book.value).turn({
-          width,
-          height,
-          display: "single",
-          page: ordered.startPage,
-          duration: Math.max(120, props.duration),
-          gradients: true,
-          acceleration: true,
-          autoCenter: false,
-          when: {
-            turned(_event, pageNumber) {
-              if (targetRequested && pageNumber === ordered.targetPage) {
-                if (globalThis.queueMicrotask) globalThis.queueMicrotask(finish);
-                else globalThis.setTimeout?.(finish, 0);
-              }
-            },
-          },
+        flipbookEngine = createFlipbook(engineHost, {
+          source: "html",
+          content: pages,
+          preset: "minimal",
+          pagination: "none",
+          drag: false,
+          loop: false,
+          closed: true,
+          sound: { enabled: false },
         });
+        if (!flipbookEngine) throw new Error("Strata Flipbook initialization failed");
+        flipbookEventHandler = (event) => {
+          if (
+            targetRequested
+            && event.detail?.flipbook === flipbookEngine
+            && event.detail?.spread === ordered.targetSpread
+          ) {
+            if (globalThis.queueMicrotask) globalThis.queueMicrotask(finish);
+            else globalThis.setTimeout?.(finish, 0);
+          }
+        };
+        flipbookEngine.on("flip", flipbookEventHandler);
+        flipbookEngine.goTo(ordered.startSpread);
         restoreSnapshotScrollPositions();
+        book.value.dataset.engineReady = "true";
         targetRequested = true;
         globalThis.requestAnimationFrame?.(() => {
           try {
-            $(book.value).turn("page", ordered.targetPage);
+            if (direction === "previous") flipbookEngine.prev();
+            else flipbookEngine.next();
+            revealDestinationUnderlay(
+              engineHost,
+              direction,
+              pages[ordered.targetSpread],
+            );
+            restoreSnapshotScrollPositions();
           } catch (error) {
             reject(error);
           }
-        }) ?? $(book.value).turn("page", ordered.targetPage);
+        }) ?? (() => {
+          if (direction === "previous") flipbookEngine.prev();
+          else flipbookEngine.next();
+          revealDestinationUnderlay(engineHost, direction, pages[ordered.targetSpread]);
+          restoreSnapshotScrollPositions();
+        })();
         fallbackTimer = globalThis.setTimeout?.(finish, Math.max(120, props.duration) + 900);
       } catch (error) {
         reject(error);
@@ -254,7 +285,7 @@ defineExpose({ turn });
       class="day-flipbook__overlay"
       aria-hidden="true"
     >
-      <div ref="book" class="turn-flipbook" />
+      <div ref="book" class="strata-flipbook" data-flipbook-engine="strata" />
     </div>
   </div>
 </template>
@@ -263,7 +294,7 @@ defineExpose({ turn });
 .day-flipbook,
 .day-flipbook__live,
 .day-flipbook__overlay,
-.turn-flipbook {
+.strata-flipbook {
   height: 100%;
   inset: 0;
   position: absolute;
@@ -285,24 +316,67 @@ defineExpose({ turn });
   z-index: 4;
 }
 
-.turn-flipbook {
-  filter: drop-shadow(0 18px 22px rgba(30, 18, 23, 0.2));
-  transform-style: preserve-3d;
+.strata-flipbook {
+  background: rgb(var(--v-theme-background));
 }
 
-.turn-flipbook :deep(.turn-flipbook-page) {
+.strata-flipbook :deep(.strata-flipbook-engine),
+.strata-flipbook :deep(.st-flipbook-scene),
+.strata-flipbook :deep(.st-flipbook-book) {
+  height: 100%;
+  max-width: none;
+  width: 100%;
+}
+
+.strata-flipbook :deep(.st-flipbook-book) {
+  box-shadow: none;
+  padding-bottom: 0 !important;
+  transform: none !important;
+}
+
+.strata-flipbook :deep(.st-flipbook-page-left) {
+  display: none;
+}
+
+.strata-flipbook :deep(.st-flipbook-page-right) {
+  border-left: 0;
+  left: 0;
+  width: 100%;
+}
+
+.strata-flipbook :deep(.strata-flipbook-engine[data-st-flip-solo="left"] .st-flipbook-page-left) {
+  border-right: 0;
+  display: block;
+  left: 0;
+  width: 100%;
+}
+
+.strata-flipbook :deep(.strata-flipbook-engine[data-st-flip-solo="left"] .st-flipbook-page-right) {
+  display: none;
+}
+
+.strata-flipbook :deep(.st-flipbook-flip-page) {
+  left: 0;
+  width: 100%;
+}
+
+.strata-flipbook :deep([data-st-flip-direction="forward"] .st-flipbook-flip-page) {
+  transform-origin: left center;
+}
+
+.strata-flipbook :deep([data-st-flip-direction="backward"] .st-flipbook-flip-page) {
+  transform-origin: right center;
+}
+
+.strata-flipbook :deep(.day-flipbook-page) {
   background-color: rgb(var(--v-theme-background));
   height: 100%;
   overflow: hidden;
   width: 100%;
 }
 
-.turn-flipbook :deep(.day-page) {
+.strata-flipbook :deep(.day-page) {
   height: 100%;
   width: 100%;
-}
-
-.turn-flipbook :deep(.shadow) {
-  box-shadow: inset 0 0 26px rgba(43, 26, 31, 0.18);
 }
 </style>

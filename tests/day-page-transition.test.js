@@ -19,12 +19,12 @@ test("flipbook page order matches the requested turn direction", () => {
 
   assert.deepEqual(orderFlipbookPages("next", previousPage, nextPage), {
     pages: [previousPage, nextPage],
-    startPage: 1,
-    targetPage: 2,
+    startSpread: 0,
+    targetSpread: 1,
   });
   assert.deepEqual(orderFlipbookPages("previous", previousPage, nextPage), {
     pages: [nextPage, previousPage],
-    startPage: 2,
-    targetPage: 1,
+    startSpread: 1,
+    targetSpread: 0,
   });
 });

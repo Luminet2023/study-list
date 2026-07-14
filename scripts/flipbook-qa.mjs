@@ -125,15 +125,24 @@ try {
   const turning = page.locator(".day-flipbook--turning");
   await turning.waitFor({ state: "visible", timeout: 3_000 });
   await page.waitForTimeout(220);
-  assert.ok(await page.locator(".turn-flipbook .page-wrapper").count());
+  const engine = page.locator('[data-flipbook-engine="strata"][data-engine-ready="true"]');
+  await engine.waitFor({ state: "visible", timeout: 3_000 });
+  assert.ok(await engine.locator(".st-flipbook-flip-page").count());
+  assert.ok(await engine.locator(".st-flipbook-page-left .date-numeral").count());
   await page.screenshot({ path: "/tmp/study-list-flipbook.png", fullPage: false });
   await turning.waitFor({ state: "hidden", timeout: 3_000 });
+  assert.equal(await page.locator(".strata-flipbook-engine").count(), 0);
   await assertDate("15");
   assert.equal(new URL(page.url()).pathname, "/day/2026-07-15");
 
   await page.getByRole("button", { name: "前一天" }).click();
   await turning.waitFor({ state: "visible", timeout: 3_000 });
+  await engine.waitFor({ state: "visible", timeout: 3_000 });
+  const previousUnderlay = engine.locator(".st-flipbook-page-right .date-numeral");
+  await previousUnderlay.waitFor({ state: "visible", timeout: 3_000 });
+  assert.ok(await previousUnderlay.count());
   await turning.waitFor({ state: "hidden", timeout: 3_000 });
+  assert.equal(await page.locator(".strata-flipbook-engine").count(), 0);
   await assertDate("14");
 
   await page.reload({ waitUntil: "networkidle" });
@@ -159,7 +168,7 @@ try {
   await assertDate("15");
 
   assert.deepEqual(errors, []);
-  console.log("flipbook QA passed: settings, turn.js animation, persistence, direction and widths");
+  console.log("flipbook QA passed: settings, CSS 3D animation, persistence, direction and widths");
 } catch (error) {
   if (errors.length) console.error(`browser diagnostics:\n${errors.join("\n")}`);
   throw error;

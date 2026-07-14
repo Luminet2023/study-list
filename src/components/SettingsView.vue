@@ -74,7 +74,7 @@ const dayPageTransitionOptions = [
   {
     value: "flipbook",
     label: "3D 翻书",
-    description: "使用 turn.js 呈现纸张卷曲、阴影与真实翻书层次。",
+    description: "使用现代 CSS 3D 引擎呈现纸张弯曲、阴影与真实翻书层次。",
     icon: "mdi-book-open-page-variant-outline",
   },
 ];

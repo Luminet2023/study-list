@@ -15,13 +15,13 @@ export function orderFlipbookPages(direction, previousPage, nextPage) {
   if (direction === "previous") {
     return {
       pages: [nextPage, previousPage],
-      startPage: 2,
-      targetPage: 1,
+      startSpread: 1,
+      targetSpread: 0,
     };
   }
   return {
     pages: [previousPage, nextPage],
-    startPage: 1,
-    targetPage: 2,
+    startSpread: 0,
+    targetSpread: 1,
   };
 }
