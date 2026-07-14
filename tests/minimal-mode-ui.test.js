@@ -47,6 +47,19 @@ test("minimal mode removes the journal status chip", async () => {
   assert.doesNotMatch(workday, /极简模式，可随时书写/u);
 });
 
+test("minimal mode hides the header seal and adjacent day buttons", async () => {
+  const [app, dayPage, header] = await Promise.all([
+    readSource("../src/App.vue"),
+    readSource("../src/components/DayPage.vue"),
+    readSource("../src/components/PoeticHeader.vue"),
+  ]);
+
+  assert.match(app, /<AdjacentDayEar\s+v-if="!minimalMode"\s+side="left"/u);
+  assert.match(app, /<AdjacentDayEar\s+v-if="!minimalMode"\s+side="right"/u);
+  assert.match(dayPage, /<PoeticHeader[\s\S]+?:minimal-mode="minimalMode"/u);
+  assert.match(header, /<v-img\s+v-if="!minimalMode"\s+class="seal-mark"/u);
+});
+
 test("minimal mode removes the goal lock gate while keeping tasks editable", async () => {
   const [store, workday] = await Promise.all([
     readSource("../src/composables/useCampaignStore.js"),

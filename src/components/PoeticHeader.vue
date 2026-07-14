@@ -22,6 +22,10 @@ const props = defineProps({
     type: Boolean,
     default: false,
   },
+  minimalMode: {
+    type: Boolean,
+    default: false,
+  },
   quoteLoading: {
     type: Boolean,
     default: false,
@@ -108,6 +112,7 @@ onBeforeUnmount(stopTyping);
         <span>/</span>
         <span>{{ meta.weekday }}</span>
         <v-img
+          v-if="!minimalMode"
           class="seal-mark"
           src="/assets/seal-mark.png"
           width="18"

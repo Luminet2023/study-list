@@ -89,6 +89,7 @@ const hitokotoLoading = ref(false);
 const hitokotoError = ref("");
 const hitokotoRetryToken = ref(0);
 const hitokotoSessionBindings = ref({});
+let pendingDrawNotice = null;
 let pinchStartDistance = 0;
 let pinchTriggered = false;
 
@@ -890,7 +891,6 @@ async function resolveSlot6(redistribute) {
 
 async function executeDraw(mode, redistribute) {
   spinning.value = true;
-  let resultNotice = null;
   try {
     await new Promise((resolve) => setTimeout(resolve, DRAW_ANIMATION_DURATION_MS));
     const result = await store.performDraw(store.today.value, mode, redistribute);
@@ -901,22 +901,26 @@ async function executeDraw(mode, redistribute) {
       won,
       description: won ? "奖励已收入今日抽签，点击兑现后生效" : "风停在空签上，把好运留给下一次",
     };
-    resultNotice = {
+    pendingDrawNotice = {
       text: won ? "恭喜中奖，请在今日抽签中兑现" : "本次未中，记录已保存",
       color: won ? "secondary" : "outline",
     };
     await new Promise((resolve) => setTimeout(resolve, DRAW_RESULT_DIALOG_HOLD_MS));
   } catch (error) {
-    resultNotice = {
+    pendingDrawNotice = {
       text: error.message || "抽签未能完成",
       color: "error",
       timeout: 4200,
     };
   } finally {
     spinning.value = false;
-    await nextTick();
   }
-  enqueue(resultNotice.text, resultNotice.color, resultNotice.timeout);
+}
+
+function handleDrawDialogClosed() {
+  const resultNotice = pendingDrawNotice;
+  pendingDrawNotice = null;
+  if (resultNotice) enqueue(resultNotice.text, resultNotice.color, resultNotice.timeout);
 }
 
 async function redeemDraw(drawId) {
@@ -1324,12 +1328,14 @@ onMounted(async () => {
 
       <section v-show="viewMode === 'day'" class="day-stage paper-surface">
         <AdjacentDayEar
+          v-if="!minimalMode"
           side="left"
           :label="previousEarLabel"
           :disabled="dayTurnBusy || !previousDate"
           @navigate="navigateDate(-1)"
         />
         <AdjacentDayEar
+          v-if="!minimalMode"
           side="right"
           :label="nextEarLabel"
           :aria-label="nextEarAriaLabel"
@@ -1453,6 +1459,7 @@ onMounted(async () => {
             @back="navigateView('day')"
             @rules="rulesDialog = true"
             @resolve-award-slot6="resolveAwardSlot6"
+            @draw-dialog-closed="handleDrawDialogClosed"
           />
         </section>
 

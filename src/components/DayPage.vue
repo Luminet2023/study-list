@@ -66,6 +66,7 @@ defineEmits([
       :typewriter="page.quote?.source === 'hitokoto'"
       :attribution="page.quoteAttribution"
       :attribution-href="page.quoteAttributionHref"
+      :minimal-mode="minimalMode"
       @copy="$emit('copy-quote')"
       @toggle-like="$emit('toggle-quote')"
       @retry="$emit('retry-quote')"

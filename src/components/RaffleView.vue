@@ -52,6 +52,7 @@ const emit = defineEmits([
   "back",
   "rules",
   "resolve-award-slot6",
+  "draw-dialog-closed",
 ]);
 
 const paperDialog = ref(false);
@@ -359,6 +360,7 @@ function confirmPaperClaim() {
       persistent
       scrim="background"
       transition="fade-transition"
+      @after-leave="emit('draw-dialog-closed')"
     >
       <VCard class="draw-wheel-dialog-card" variant="outlined" aria-live="polite">
         <VCardItem class="pb-0">
