@@ -85,14 +85,6 @@ body {
 
 .paper-surface {
   background-color: rgb(var(--v-theme-background));
-  background-image: url("/assets/study-wash-bg.png");
-  background-position: center top;
-  background-repeat: no-repeat;
-  background-size: 100% 100%;
-}
-
-.v-theme--poeticNight .paper-surface {
-  background-image: url("/assets/study-wash-bg-dark.png");
 }
 
 .paper-scroll {
@@ -112,48 +104,6 @@ body {
 
 .paper-scroll::-webkit-scrollbar-thumb {
   background: rgba(var(--v-theme-outline), 0.32);
-}
-
-.page-next-enter-active,
-.page-next-leave-active,
-.page-prev-enter-active,
-.page-prev-leave-active {
-  backface-visibility: hidden;
-  position: absolute;
-  inset: 0;
-  transition:
-    opacity 200ms cubic-bezier(0.22, 1, 0.36, 1),
-    transform 220ms cubic-bezier(0.22, 1, 0.36, 1),
-    filter 180ms ease;
-  will-change: opacity, transform;
-}
-
-.page-next-enter-from {
-  filter: brightness(0.94);
-  opacity: 0.25;
-  transform: perspective(1100px) translateX(24%) rotateY(14deg);
-  transform-origin: left center;
-}
-
-.page-next-leave-to {
-  filter: brightness(0.92);
-  opacity: 0;
-  transform: perspective(1100px) translateX(-18%) rotateY(-18deg);
-  transform-origin: right center;
-}
-
-.page-prev-enter-from {
-  filter: brightness(0.94);
-  opacity: 0.25;
-  transform: perspective(1100px) translateX(-24%) rotateY(-14deg);
-  transform-origin: right center;
-}
-
-.page-prev-leave-to {
-  filter: brightness(0.92);
-  opacity: 0;
-  transform: perspective(1100px) translateX(18%) rotateY(18deg);
-  transform-origin: left center;
 }
 
 .sr-only {

@@ -47,10 +47,6 @@ import {
 } from "../persistence/indexedDb.js";
 import { createBaselineId, isBaselineId } from "../sync/baseline.js";
 import { isPageActive } from "../lib/pageActivity.js";
-import {
-  DAY_PAGE_TRANSITION,
-  normalizeDayPageTransition,
-} from "../lib/dayPageTransition.js";
 import { normalizeHitokotoCategories, normalizeHitokotoPayload } from "../services/hitokoto.js";
 
 const QUOTE_SOURCES = new Set(["native", "hitokoto"]);
@@ -75,7 +71,6 @@ function defaultState(baselineId = createBaselineId()) {
     preferences: {
       selectedDate: clampCampaignDate(shanghaiDateKey()),
       fontFamily: "lxgw-wenka",
-      dayPageTransition: DAY_PAGE_TRANSITION.CLASSIC,
       quoteSource: "native",
       hitokotoCategories: [],
     },
@@ -115,6 +110,10 @@ function mergeDay(baseDay, storedDay) {
 function normalizeState(input) {
   const base = defaultState();
   const incoming = input && typeof input === "object" ? input : {};
+  const incomingPreferences = { ...(incoming.preferences ?? {}) };
+  // `dayPageTransition` was a browser-only preference. Day pages now always
+  // use StPageFlip, so discard stale IndexedDB snapshots that still carry it.
+  delete incomingPreferences.dayPageTransition;
   const days = Object.fromEntries(
     Object.entries(base.days).map(([date, day]) => [
       date,
@@ -132,10 +131,7 @@ function normalizeState(input) {
     quoteLikes: incoming.quoteLikes ?? {},
     preferences: {
       ...base.preferences,
-      ...(incoming.preferences ?? {}),
-      dayPageTransition: normalizeDayPageTransition(
-        incoming.preferences?.dayPageTransition,
-      ),
+      ...incomingPreferences,
       quoteSource: normalizeQuoteSource(incoming.preferences?.quoteSource),
       hitokotoCategories: normalizeHitokotoCategories(incoming.preferences?.hitokotoCategories),
     },
@@ -176,17 +172,11 @@ function notifyChangeListeners() {
   for (const listener of changeListeners) listener();
 }
 
-function replaceState(nextState, { preserveDayPageTransition = true } = {}) {
+function replaceState(nextState) {
   const selectedDate = state.preferences?.selectedDate;
-  const dayPageTransition = normalizeDayPageTransition(
-    state.preferences?.dayPageTransition,
-  );
   suppressPersistence = true;
   const normalized = normalizeState(nextState);
   if (selectedDate) normalized.preferences.selectedDate = clampCampaignDate(selectedDate);
-  if (preserveDayPageTransition) {
-    normalized.preferences.dayPageTransition = dayPageTransition;
-  }
   for (const key of Object.keys(state)) delete state[key];
   Object.assign(state, normalized);
   suppressPersistence = false;
@@ -287,7 +277,6 @@ watch(
     days: state.days,
     quoteLikes: state.quoteLikes,
     fontFamily: state.preferences?.fontFamily,
-    dayPageTransition: state.preferences?.dayPageTransition,
     quoteSource: state.preferences?.quoteSource,
     hitokotoCategories: state.preferences?.hitokotoCategories,
     raffle: state.raffle,
@@ -299,17 +288,21 @@ watch(
 async function reloadFromStorage() {
   const loaded = await loadCampaignState(defaultState);
   const baselineWasMissing = !isBaselineId(loaded.baselineId);
-  replaceState(loaded, { preserveDayPageTransition: false });
-  return baselineWasMissing;
+  const legacyTransitionWasStored = Object.hasOwn(
+    loaded.preferences ?? {},
+    "dayPageTransition",
+  );
+  replaceState(loaded);
+  return baselineWasMissing || legacyTransitionWasStored;
 }
 
 export async function initializeCampaignStore() {
   if (initialized) return;
   initialized = true;
-  let baselineWasMissing = false;
+  let stateNeedsMigration = false;
   refreshTodayAndSchedule();
   try {
-    baselineWasMissing = await reloadFromStorage();
+    stateNeedsMigration = await reloadFromStorage();
     await requestPersistentStorage().catch(() => false);
     channel = createCampaignChannel(async (revision) => {
       if (revision <= (state.revision ?? 0)) return;
@@ -329,7 +322,7 @@ export async function initializeCampaignStore() {
     saveError.value = error;
   } finally {
     ready.value = true;
-    if (baselineWasMissing) {
+    if (stateNeedsMigration) {
       dirty = true;
       pendingSave.value = true;
       await flushPersistence().catch((error) => {
@@ -349,9 +342,6 @@ async function replaceFromSync(nextState) {
 function createCleanSyncState(baselineId) {
   const clean = defaultState(baselineId);
   clean.preferences.selectedDate = state.preferences?.selectedDate ?? clean.preferences.selectedDate;
-  clean.preferences.dayPageTransition = normalizeDayPageTransition(
-    state.preferences?.dayPageTransition,
-  );
   return normalizeState(clean);
 }
 
@@ -382,10 +372,6 @@ function setSelectedDate(date) {
 function setFontFamily(fontFamily) {
   const allowed = new Set(["system", "lxgw-wenka", "anthropic"]);
   state.preferences.fontFamily = allowed.has(fontFamily) ? fontFamily : "lxgw-wenka";
-}
-
-function setDayPageTransition(transition) {
-  state.preferences.dayPageTransition = normalizeDayPageTransition(transition);
 }
 
 function setQuoteSource(source) {
@@ -704,7 +690,6 @@ export function useCampaignStore() {
     today: readonly(today),
     setSelectedDate,
     setFontFamily,
-    setDayPageTransition,
     setQuoteSource,
     setHitokotoCategories,
     boundHitokotoUuids,

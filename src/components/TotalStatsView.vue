@@ -135,7 +135,7 @@ const luckProgress = computed(() =>
             <v-card class="metric-card" variant="outlined" elevation="0">
               <v-card-text>
                 <div class="metric-value">{{ numberValue("diaryChars") }}</div>
-                <div class="metric-label">日结 / 日记字数</div>
+                <div class="metric-label">日记字数</div>
                 <div class="metric-detail">留给夜晚的回声</div>
               </v-card-text>
             </v-card>

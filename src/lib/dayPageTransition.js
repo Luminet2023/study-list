@@ -1,27 +1,29 @@
-export const DAY_PAGE_TRANSITION = Object.freeze({
-  CLASSIC: "classic",
-  FLIPBOOK: "flipbook",
-});
-
-const ALLOWED_DAY_PAGE_TRANSITIONS = new Set(Object.values(DAY_PAGE_TRANSITION));
-
-export function normalizeDayPageTransition(value) {
-  return ALLOWED_DAY_PAGE_TRANSITIONS.has(value)
-    ? value
-    : DAY_PAGE_TRANSITION.CLASSIC;
+export function createDayFlipbookPages(dates) {
+  return Array.isArray(dates)
+    ? dates.map((date, position) => ({ date, position }))
+    : [];
 }
 
-export function orderFlipbookPages(direction, previousPage, nextPage) {
-  if (direction === "previous") {
-    return {
-      pages: [nextPage, previousPage],
-      startSpread: 1,
-      targetSpread: 0,
-    };
-  }
-  return {
-    pages: [previousPage, nextPage],
-    startSpread: 0,
-    targetSpread: 1,
-  };
+export function findDayFlipbookPosition(dates, date) {
+  return Array.isArray(dates) ? dates.indexOf(date) : -1;
+}
+
+export function createDayFlipbookHydrationPositions(
+  dates,
+  selectedDate,
+  { active = true, radius = 1 } = {},
+) {
+  if (!active || !Array.isArray(dates) || dates.length === 0) return [];
+
+  const selectedPosition = findDayFlipbookPosition(dates, selectedDate);
+  if (selectedPosition < 0) return [];
+
+  const safeRadius = Number.isInteger(radius) && radius >= 0 ? radius : 1;
+  const firstPosition = Math.max(0, selectedPosition - safeRadius);
+  const lastPosition = Math.min(dates.length - 1, selectedPosition + safeRadius);
+
+  return Array.from(
+    { length: lastPosition - firstPosition + 1 },
+    (_, offset) => firstPosition + offset,
+  );
 }

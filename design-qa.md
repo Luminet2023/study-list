@@ -103,7 +103,7 @@ Post-fix visual evidence:
 - [P2] Snackbar Queue 仅有 `collapsed`，但默认 `totalVisible=1`，不存在可叠放的第二条 toast。
 - [P2] 转盘页沿用通用学习背景，PC 大面积区域显得空白，且缺少转盘页自己的视觉识别。
 - 使用官方组合：`collapsed`、`total-visible=5`、`display-strategy="hold"`。连续触发 3 条消息时自动化断言确认 3 条 active、至少 2 层 collapsed。
-- 以既有宣纸水彩为风格参考，通过 ImageGen 生成独立 `raffle-wash-bg.png`；锦鲤、涟漪与签纸集中在内容安全区之外，PC 与手机分别适配裁切。
+- 后续产品方向已取消页面插画背景；转盘页与通用学习页统一使用主题纯色背景。
 - Post-fix visual evidence:
   - `/home/luminet/coding/zako/study-list/qa/implementation-desktop-snackbar-queue.png`
   - `/home/luminet/coding/zako/study-list/qa/implementation-desktop-raffle.png`
@@ -111,7 +111,7 @@ Post-fix visual evidence:
 
 ### Pass 7 — passed（工作日目标锁定门禁）
 
-- 工作日第 4、6、7 项未全部填写时，八个状态按钮与日结 / 日记入口均保持禁用。
+- 工作日第 4、6、7 项未全部填写时，八个状态按钮与日记入口均保持禁用。
 - 填写完整后仅开放“核对并锁定今日目标”；确认弹窗逐项展示八个最终目标，并明确区分固定目标与用户填写内容。
 - 确认锁定后输入变为只读、状态按钮开放；八项有效状态全部完成后才开放 Markdown 日记编辑器，转盘免项按完成处理。
 - IndexedDB 刷新回归确认：填写内容、锁定状态、八项完成状态与日记内容均恢复成功。
@@ -148,7 +148,7 @@ Post-fix visual evidence:
 
 ### Pass 10 — passed（直接翻页与旅程终章）
 
-- 日视图右侧书耳及左滑会直接切换到下一天，继续沿用 `page-next` / `page-prev` 拟真翻页动画；左书耳返回前一天。
+- 日视图右侧书耳及左滑通过固定的 StPageFlip 3D 翻书切换到下一天；左书耳返回前一天，设置页不再提供效果切换。
 - 已移除不属于原计划的“今日收束 / 本周收束”页面及 `/day/:date/summary` 路由。
 - 08/29 右书耳保持可用并改为“旅程终章”，进入 `/ending`；终章固定以活动截止日统计，展示完成项、日结字数、完成率、满勤周与中奖次数。
 - 终章烟花自动播放且可手动重放，不遮挡操作；`prefers-reduced-motion` 下关闭位移动画。

@@ -8,11 +8,7 @@ const PUBLIC_PRECACHE_PATHS = [
   "/icons/app-icon-512.png",
   "/icons/app-icon-maskable-512.png",
   "/icons/apple-touch-icon-180.png",
-  "/assets/study-wash-bg.png",
-  "/assets/study-wash-bg-dark.png",
   "/assets/seal-mark.png",
-  "/assets/brush-alert.png",
-  "/assets/brush-alert-dark.png",
   "/assets/page-fold.png",
   "/assets/page-fold-dark.png",
 ];

@@ -1,6 +1,5 @@
 <script setup>
 import {
-  Transition as VueTransition,
   computed,
   defineAsyncComponent,
   nextTick,
@@ -14,7 +13,7 @@ import { useDisplay } from "vuetify";
 
 import AdjacentDayEar from "./components/AdjacentDayEar.vue";
 import DayFlipbook from "./components/DayFlipbook.vue";
-import PoeticHeader from "./components/PoeticHeader.vue";
+import DayPage from "./components/DayPage.vue";
 import {
   CAMPAIGN_END,
   CAMPAIGN_START,
@@ -36,7 +35,6 @@ import {
 import { PRIZE_DEFINITIONS } from "./domain/raffle.js";
 import { quoteForDate } from "./data/quotes.js";
 import { fetchUniqueHitokoto } from "./services/hitokoto.js";
-import { DAY_PAGE_TRANSITION } from "./lib/dayPageTransition.js";
 import { resolveRouteSelectedDate } from "./router/routeState.js";
 import {
   initializeCampaignStore,
@@ -52,11 +50,9 @@ const CampaignEndingView = defineAsyncComponent(() => import("./components/Campa
 const MonthOverview = defineAsyncComponent(() => import("./components/MonthOverview.vue"));
 const RaffleView = defineAsyncComponent(() => import("./components/RaffleView.vue"));
 const SettingsView = defineAsyncComponent(() => import("./components/SettingsView.vue"));
-const SaturdayView = defineAsyncComponent(() => import("./components/SaturdayView.vue"));
 const TotalStatsView = defineAsyncComponent(() => import("./components/TotalStatsView.vue"));
 const WeekOverview = defineAsyncComponent(() => import("./components/WeekOverview.vue"));
 const WeekStatsView = defineAsyncComponent(() => import("./components/WeekStatsView.vue"));
-const WorkdayView = defineAsyncComponent(() => import("./components/WorkdayView.vue"));
 
 const store = useCampaignStore();
 const auth = useAuthSession();
@@ -71,10 +67,9 @@ const viewMode = ref(route.meta.viewMode ?? "day");
 const priorView = ref("day");
 const statsReference = ref(null);
 const returnDate = ref(null);
-const pageDirection = ref("page-next");
 const dayFlipbook = ref(null);
 const dayTurnBusy = ref(false);
-const dayScroll = ref(null);
+const dayTurnEarState = ref(null);
 const snackbarQueue = ref([]);
 const spinning = ref(false);
 const lastResult = ref(null);
@@ -100,7 +95,6 @@ const selectedDate = computed(
   () => store.state.preferences?.selectedDate ?? CAMPAIGN_START,
 );
 const currentDay = computed(() => store.state.days?.[selectedDate.value]);
-const currentDayType = computed(() => getDayType(selectedDate.value));
 const quoteSource = computed(() =>
   store.state.preferences?.quoteSource === "hitokoto" ? "hitokoto" : "native",
 );
@@ -113,14 +107,21 @@ const persistedHitokoto = computed(() => currentDay.value?.blessing?.hitokoto ??
 const currentHitokoto = computed(() =>
   persistedHitokoto.value ?? hitokotoSessionBindings.value[selectedDate.value] ?? null,
 );
-const currentQuote = computed(() => {
+
+function hitokotoForDate(date) {
+  return store.state.days?.[date]?.blessing?.hitokoto
+    ?? hitokotoSessionBindings.value[date]
+    ?? null;
+}
+
+function quoteForDay(date) {
   if (quoteSource.value === "hitokoto") {
-    const binding = currentHitokoto.value;
+    const binding = hitokotoForDate(date);
     if (!binding?.uuid || !binding?.hitokoto) return null;
     return {
       id: `hitokoto:${binding.uuid}`,
       uuid: binding.uuid,
-      date: selectedDate.value,
+      date,
       text: binding.hitokoto,
       source: "hitokoto",
       type: binding.type ?? null,
@@ -128,24 +129,21 @@ const currentQuote = computed(() => {
       fromWho: binding.fromWho ?? null,
     };
   }
-  const quote = quoteForDate(selectedDate.value);
+  const quote = quoteForDate(date);
   return quote ? { ...quote, source: "native" } : null;
-});
-const quoteLiked = computed(() =>
-  Boolean(currentQuote.value && store.state.quoteLikes?.[currentQuote.value.id]),
-);
-const quoteAttribution = computed(() => {
-  if (currentQuote.value?.source !== "hitokoto") return "";
-  const source = [currentQuote.value.fromWho, currentQuote.value.from]
-    .filter(Boolean)
-    .join(" · ");
+}
+
+function quoteAttributionFor(quote) {
+  if (quote?.source !== "hitokoto") return "";
+  const source = [quote.fromWho, quote.from].filter(Boolean).join(" · ");
   return source ? `一言 · ${source}` : "一言";
-});
-const quoteAttributionHref = computed(() =>
-  currentQuote.value?.source === "hitokoto" && currentQuote.value.uuid
-    ? `https://hitokoto.cn?uuid=${encodeURIComponent(currentQuote.value.uuid)}`
-    : "",
-);
+}
+
+function quoteAttributionHrefFor(quote) {
+  return quote?.source === "hitokoto" && quote.uuid
+    ? `https://hitokoto.cn?uuid=${encodeURIComponent(quote.uuid)}`
+    : "";
+}
 
 watch(
   () => [selectedDate.value, persistedHitokoto.value],
@@ -174,19 +172,6 @@ const fontFamily = computed(() => {
     ? value
     : "lxgw-wenka";
 });
-const dayPageTransition = computed(() =>
-  store.state.preferences?.dayPageTransition === DAY_PAGE_TRANSITION.FLIPBOOK
-    ? DAY_PAGE_TRANSITION.FLIPBOOK
-    : DAY_PAGE_TRANSITION.CLASSIC,
-);
-const dayTransitionComponent = computed(() =>
-  dayPageTransition.value === DAY_PAGE_TRANSITION.CLASSIC ? VueTransition : "div",
-);
-const dayTransitionBindings = computed(() =>
-  dayPageTransition.value === DAY_PAGE_TRANSITION.CLASSIC
-    ? { name: pageDirection.value, mode: "out-in" }
-    : { class: "day-flipbook-static" },
-);
 const cloudSyncTitle = computed(() => {
   if (!auth.user.value) return "通过 Linux DO 登录";
   if (syncControls.value?.baselineConflict.value) return "同步进度等待确认";
@@ -310,14 +295,25 @@ function retryHitokoto() {
   hitokotoRetryToken.value += 1;
 }
 
-const dateMeta = computed(() => {
-  const [year, month, day] = selectedDate.value.split("-");
-  return { year, month, day, weekday: getWeekdayName(selectedDate.value) };
-});
+function dateMetaFor(date) {
+  const [year, month, day] = date.split("-");
+  return { year, month, day, weekday: getWeekdayName(date) };
+}
 
 const selectedIndex = computed(() => campaignDates.indexOf(selectedDate.value));
 const previousDate = computed(() => campaignDates[selectedIndex.value - 1] ?? null);
 const nextDate = computed(() => campaignDates[selectedIndex.value + 1] ?? null);
+const previousEarLabel = computed(() =>
+  dayTurnEarState.value?.previousLabel ?? earLabel(previousDate.value),
+);
+const nextEarLabel = computed(() =>
+  dayTurnEarState.value?.nextLabel
+  ?? (selectedDate.value === CAMPAIGN_END ? "旅程终章" : earLabel(nextDate.value)),
+);
+const nextEarAriaLabel = computed(() =>
+  dayTurnEarState.value?.nextAriaLabel
+  ?? (selectedDate.value === CAMPAIGN_END ? "进入旅程终章" : "后一天"),
+);
 
 function routeParam(value) {
   return Array.isArray(value) ? value[0] : value;
@@ -347,6 +343,7 @@ function applyRouteState() {
   const month = routeParam(route.params.month);
   const from = routeParam(route.query.from);
 
+  if (mode !== "day") dayFlipbook.value?.cancelPendingTurn?.();
   viewMode.value = mode;
   if (mdAndUp.value) drawer.value = true;
   const routeSelectedDate = resolveRouteSelectedDate({
@@ -379,6 +376,19 @@ function earLabel(date) {
   return `${month}/${day} ${getWeekdayName(date).slice(-2)}`;
 }
 
+function handleDayTurnBusy(value) {
+  const nextBusy = Boolean(value);
+  if (nextBusy && !dayTurnBusy.value) {
+    dayTurnEarState.value = {
+      previousLabel: earLabel(previousDate.value),
+      nextLabel: selectedDate.value === CAMPAIGN_END ? "旅程终章" : earLabel(nextDate.value),
+      nextAriaLabel: selectedDate.value === CAMPAIGN_END ? "进入旅程终章" : "后一天",
+    };
+  }
+  dayTurnBusy.value = nextBusy;
+  if (!nextBusy) dayTurnEarState.value = null;
+}
+
 function enqueue(text, color = "primary", timeout = 2600) {
   snackbarQueue.value.push({ text, color, timeout });
 }
@@ -389,17 +399,15 @@ async function commitDateNavigation(next) {
   store.setSelectedDate(next);
   await router.push(routeLocation("day", next));
   await nextTick();
-  dayScroll.value?.scrollTo?.({ top: 0, behavior: "instant" });
 }
 
 function navigateDate(delta) {
   const next = campaignDates[selectedIndex.value + delta];
   if (!next || dayTurnBusy.value) return;
-  pageDirection.value = delta > 0 ? "page-next" : "page-prev";
   const direction = delta > 0 ? "next" : "previous";
   const navigation =
-    dayPageTransition.value === DAY_PAGE_TRANSITION.FLIPBOOK && dayFlipbook.value
-      ? dayFlipbook.value.turn(direction, () => commitDateNavigation(next))
+    dayFlipbook.value
+      ? dayFlipbook.value.turn(direction, next, () => commitDateNavigation(next))
       : commitDateNavigation(next);
   void Promise.resolve(navigation).catch((error) => {
     enqueue(error?.message || "翻页未能完成", "error", 3600);
@@ -407,8 +415,8 @@ function navigateDate(delta) {
 }
 
 function advanceFromDay() {
+  if (dayTurnBusy.value) return;
   if (selectedDate.value === CAMPAIGN_END) {
-    pageDirection.value = "page-next";
     statsReference.value = null;
     returnDate.value = null;
     void router.push(routeLocation("ending"));
@@ -422,7 +430,7 @@ function selectDate(date) {
     openWeekStats(CAMPAIGN_END);
     return;
   }
-  pageDirection.value = date > selectedDate.value ? "page-next" : "page-prev";
+  dayFlipbook.value?.cancelPendingTurn?.();
   statsReference.value = null;
   returnDate.value = null;
   store.setSelectedDate(date);
@@ -438,12 +446,14 @@ function selectWeekFromMonth(date) {
 }
 
 function navigateView(mode) {
+  if (mode !== "day") dayFlipbook.value?.cancelPendingTurn?.();
   priorView.value = viewMode.value;
   drawer.value = mdAndUp.value;
   void router.push(routeLocation(mode));
 }
 
 function openWeekStats(date = selectedDate.value) {
+  dayFlipbook.value?.cancelPendingTurn?.();
   const week = getCampaignWeek(date);
   returnDate.value = selectedDate.value;
   statsReference.value = week.startDate;
@@ -488,27 +498,14 @@ async function copyText(text, success = "已复制到剪贴板") {
   }
 }
 
-function toggleQuote() {
-  const wasLiked = quoteLiked.value;
-  store.toggleQuoteLike(currentQuote.value);
+function toggleQuoteForDate(date) {
+  const quote = quoteForDay(date);
+  if (!quote) return;
+  const wasLiked = Boolean(store.state.quoteLikes?.[quote.id]);
+  store.toggleQuoteLike(quote);
   enqueue(wasLiked ? "已移出赠语收藏" : "已收藏这句赠语", wasLiked ? "outline" : "secondary");
 }
 
-const displayItems = computed(() =>
-  currentDayType.value === DAY_TYPE.WORKDAY
-    ? store.workdayViewItems(selectedDate.value)
-    : [],
-);
-const saturdayItems = computed(() => store.saturdayViewItems(selectedDate.value));
-const workdayGoalsReady = computed(() =>
-  areWorkdayGoalInputsComplete(currentDay.value),
-);
-const workdayGoalsLocked = computed(
-  () => Boolean(currentDay.value?.goalsLocked) && workdayGoalsReady.value,
-);
-const workdayJournalUnlocked = computed(() =>
-  isWorkdayJournalUnlocked(currentDay.value, store.state),
-);
 const goalLockDay = computed(() =>
   goalLockDate.value ? store.state.days?.[goalLockDate.value] : null,
 );
@@ -528,12 +525,12 @@ const goalPreviewItems = computed(() =>
   }),
 );
 
-function requestGoalLock() {
-  if (!workdayGoalsReady.value) {
+function requestGoalLockForDate(date) {
+  if (!areWorkdayGoalInputsComplete(store.state.days?.[date])) {
     enqueue("请先填写第 4、7 项留白；第 6 项可以留空", "outline");
     return;
   }
-  goalLockDate.value = selectedDate.value;
+  goalLockDate.value = date;
   goalLockDialog.value = true;
 }
 
@@ -551,26 +548,27 @@ function confirmGoalLock() {
   enqueue("今日目标已锁定！", "secondary");
 }
 
-function undoGoalLock() {
-  if (!store.unlockGoals(selectedDate.value)) return;
+function undoGoalLockForDate(date) {
+  if (!store.unlockGoals(date)) return;
   enqueue("已重新进入目标编辑状态", "outline");
 }
 
-function cycleCurrent(slotOrId) {
-  const day = currentDay.value;
+function cycleDate(date, slotOrId) {
+  const day = store.state.days?.[date];
   const slot =
     typeof slotOrId === "number"
       ? slotOrId
       : day?.items?.find((item) => item.id === slotOrId)?.slot;
   if (!slot) return;
-  const viewItem = displayItems.value.find((item) => item.slot === slot);
+  const viewItem = store.workdayViewItems(date).find((item) => item.slot === slot);
   if (day?.type === DAY_TYPE.WORKDAY && viewItem?.isPlanned === false) {
     enqueue("第 6 项保持留空，未列入今日计划", "outline");
     return;
   }
-  if (!store.cycleStatus(selectedDate.value, slot)) {
+  if (!store.cycleStatus(date, slot)) {
     enqueue(
-      day?.type === DAY_TYPE.WORKDAY && !workdayGoalsLocked.value
+      day?.type === DAY_TYPE.WORKDAY
+        && !(Boolean(day?.goalsLocked) && areWorkdayGoalInputsComplete(day))
         ? "请先填写并锁定今日目标"
         : "该项已由转盘免除，并按完成统计",
       "secondary",
@@ -605,6 +603,17 @@ function mapStats(raw) {
     incompleteCount: raw.unfinishedItems ?? 0,
     incompleteBySubject: raw.unfinishedBySubject ?? {},
   };
+}
+
+function weekStatsForDate(date) {
+  return mapStats(
+    calculateWeekStats(store.state, getCampaignWeek(date), { asOf: store.today.value }),
+  );
+}
+
+function weekLabelForDate(date) {
+  const week = getCampaignWeek(date);
+  return `${week.startDate.slice(5).replace("-", "/")}—${week.endDate.slice(5).replace("-", "/")}`;
 }
 
 const activeStatsWeek = computed(() =>
@@ -745,15 +754,15 @@ const drawsToday = computed(() =>
     }),
 );
 
-const redeemedDayAwards = computed(() =>
-  (store.state.raffle?.awards ?? [])
+function redeemedDayAwardsForDate(date) {
+  return (store.state.raffle?.awards ?? [])
     .filter(
       (award) =>
         isAwardRedeemed(award) &&
-        award.targets?.some((target) => target?.date === selectedDate.value),
+        award.targets?.some((target) => target?.date === date),
     )
     .map((award) => {
-      const target = award.targets.find((candidate) => candidate?.date === selectedDate.value);
+      const target = award.targets.find((candidate) => candidate?.date === date);
       const slots = Array.isArray(target?.slots) ? target.slots : [];
       return {
         id: award.id,
@@ -763,8 +772,45 @@ const redeemedDayAwards = computed(() =>
             ? "今天的计划已按奖励规则全部计为完成。愿这份幸运替努力留出一段从容。"
             : `今天的第 ${slots.join("、")} 项计划已按完成计入统计。`,
       };
-    }),
+    });
+}
+
+function buildDayPageModel(date) {
+  const day = store.state.days?.[date];
+  const dayType = getDayType(date);
+  const quote = quoteForDay(date);
+  const week = getCampaignWeek(date);
+  const goalsReady = dayType === DAY_TYPE.WORKDAY && areWorkdayGoalInputsComplete(day);
+
+  return {
+    meta: dateMetaFor(date),
+    day,
+    dayType,
+    quote,
+    quoteLiked: Boolean(quote && store.state.quoteLikes?.[quote.id]),
+    quoteAttribution: quoteAttributionFor(quote),
+    quoteAttributionHref: quoteAttributionHrefFor(quote),
+    redeemedAwards: redeemedDayAwardsForDate(date),
+    workdayItems: dayType === DAY_TYPE.WORKDAY ? store.workdayViewItems(date) : [],
+    saturdayItems: dayType === DAY_TYPE.SATURDAY ? store.saturdayViewItems(date) : [],
+    goalsReady,
+    goalsLocked: Boolean(day?.goalsLocked) && goalsReady,
+    journalUnlocked: dayType === DAY_TYPE.WORKDAY
+      ? isWorkdayJournalUnlocked(day, store.state)
+      : false,
+    weekStats: dayType === DAY_TYPE.SUNDAY ? weekStatsForDate(date) : null,
+    weekLabel: weekLabelForDate(date),
+    weekIndex: week.number,
+  };
+}
+
+const dayPageModels = new Map(
+  campaignDates.map((date) => [date, computed(() => buildDayPageModel(date))]),
 );
+
+function dayPageModel(date) {
+  return dayPageModels.get(date)?.value ?? buildDayPageModel(date);
+}
 const todayInCampaign = computed(
   () => store.today.value >= CAMPAIGN_START && store.today.value <= CAMPAIGN_END,
 );
@@ -1049,7 +1095,7 @@ onMounted(async () => {
             </v-avatar>
           </template>
           <v-list-item-title>暁夕の箋</v-list-item-title>
-          <v-list-item-subtitle>07.13—08.29 · 日々を光とし</v-list-item-subtitle>
+          <v-list-item-subtitle>日々を光とし</v-list-item-subtitle>
         </v-list-item>
         <v-divider />
         <v-list nav density="comfortable" class="pt-3">
@@ -1225,113 +1271,64 @@ onMounted(async () => {
         </v-card>
       </v-menu>
 
+      <section v-show="viewMode === 'day'" class="day-stage paper-surface">
+        <AdjacentDayEar
+          side="left"
+          :label="previousEarLabel"
+          :disabled="dayTurnBusy || !previousDate"
+          @navigate="navigateDate(-1)"
+        />
+        <AdjacentDayEar
+          side="right"
+          :label="nextEarLabel"
+          :aria-label="nextEarAriaLabel"
+          :disabled="dayTurnBusy"
+          @navigate="advanceFromDay"
+        />
+
+        <DayFlipbook
+          ref="dayFlipbook"
+          :active="viewMode === 'day'"
+          :dates="campaignDates"
+          :selected-date="selectedDate"
+          @navigate="navigateDate"
+          @update:busy="handleDayTurnBusy"
+          @animation-error="enqueue('3D 翻页暂不可用，已直接完成日期切换', 'error', 4200)"
+        >
+          <template #default="{ date, active }">
+            <DayPage
+              v-memo="[
+                active,
+                dayPageModel(date),
+                active ? hitokotoLoading : false,
+                active ? hitokotoError : '',
+              ]"
+              :date="date"
+              :active="active"
+              :page="dayPageModel(date)"
+              :quote-loading="active && hitokotoLoading"
+              :quote-error="active ? hitokotoError : ''"
+              @copy-quote="copyText(quoteForDay(date)?.text, '今日赠语已复制')"
+              @toggle-quote="toggleQuoteForDate(date)"
+              @retry-quote="active && retryHitokoto()"
+              @open-week-stats="openWeekStats(date)"
+              @cycle="cycleDate(date, $event)"
+              @request-lock="requestGoalLockForDate(date)"
+              @unlock="undoGoalLockForDate(date)"
+              @update-item="store.updateItem(date, $event.slot, $event.value)"
+              @update-diary="store.updateJournal(date, $event)"
+              @update-saturday-item="store.updateSaturdayItem(date, $event.id, $event.value)"
+              @remove-saturday-item="store.removeSaturday(date, $event)"
+              @add-saturday-item="store.addSaturdayItem(date, $event)"
+              @add-saturday-items="store.addSaturdayItems(date, $event)"
+              @close-stats="date === selectedDate && closeSundayStats()"
+            />
+          </template>
+        </DayFlipbook>
+      </section>
+
       <v-fade-transition mode="out-in">
-        <section v-if="viewMode === 'day'" key="day" class="day-stage paper-surface">
-          <AdjacentDayEar
-            side="left"
-            :label="earLabel(previousDate)"
-            :disabled="dayTurnBusy || !previousDate"
-            @navigate="navigateDate(-1)"
-          />
-          <AdjacentDayEar
-            side="right"
-            :label="selectedDate === CAMPAIGN_END ? '旅程终章' : earLabel(nextDate)"
-            :aria-label="selectedDate === CAMPAIGN_END ? '进入旅程终章' : '后一天'"
-            :disabled="dayTurnBusy"
-            @navigate="advanceFromDay"
-          />
-
-          <DayFlipbook
-            ref="dayFlipbook"
-            :enabled="dayPageTransition === DAY_PAGE_TRANSITION.FLIPBOOK"
-            @update:busy="dayTurnBusy = $event"
-            @animation-error="enqueue('3D 翻页暂不可用，已完成日期切换', 'error', 4200)"
-          >
-            <component :is="dayTransitionComponent" v-bind="dayTransitionBindings">
-              <div
-                :key="selectedDate"
-                ref="dayScroll"
-                v-touch="{ left: advanceFromDay, right: () => navigateDate(-1) }"
-                class="paper-scroll day-page"
-              >
-              <PoeticHeader
-                :meta="dateMeta"
-                :quote="currentQuote?.text"
-                :liked="quoteLiked"
-                :quote-loading="hitokotoLoading"
-                :quote-error="hitokotoError"
-                :typewriter="currentQuote?.source === 'hitokoto'"
-                :attribution="quoteAttribution"
-                :attribution-href="quoteAttributionHref"
-                @copy="copyText(currentQuote?.text, '今日赠语已复制')"
-                @toggle-like="toggleQuote"
-                @retry="retryHitokoto"
-              />
-
-              <div class="day-body">
-                <VFadeTransition group>
-                  <VAlert
-                    v-for="award in redeemedDayAwards"
-                    :key="award.id"
-                    class="reward-notice"
-                    color="secondary"
-                    icon="mdi-party-popper"
-                    variant="tonal"
-                  >
-                    <div class="reward-notice__title">{{ award.title }}</div>
-                    <div class="reward-notice__detail">{{ award.detail }}</div>
-                  </VAlert>
-                </VFadeTransition>
-
-                <div v-if="currentDayType !== DAY_TYPE.SUNDAY" class="week-jump-wrap">
-                  <v-btn
-                    size="small"
-                    variant="text"
-                    append-icon="mdi-chart-timeline-variant"
-                    @click="openWeekStats()"
-                  >
-                    本周统计
-                  </v-btn>
-                </div>
-
-                <WorkdayView
-                  v-if="currentDayType === DAY_TYPE.WORKDAY"
-                  :items="displayItems"
-                  :diary="currentDay?.journal ?? ''"
-                  :goals-ready="workdayGoalsReady"
-                  :goals-locked="workdayGoalsLocked"
-                  :journal-unlocked="workdayJournalUnlocked"
-                  @cycle="cycleCurrent"
-                  @request-lock="requestGoalLock"
-                  @unlock="undoGoalLock"
-                  @update-item="store.updateItem(selectedDate, $event.slot, $event.value)"
-                  @update:diary="store.updateJournal(selectedDate, $event)"
-                />
-
-                <SaturdayView
-                  v-else-if="currentDayType === DAY_TYPE.SATURDAY"
-                  :items="saturdayItems"
-                  @cycle="cycleCurrent"
-                  @update-item="store.updateSaturdayItem(selectedDate, $event.id, $event.value)"
-                  @remove="store.removeSaturday(selectedDate, $event)"
-                  @add="store.addSaturdayItem(selectedDate, $event)"
-                  @add-many="store.addSaturdayItems(selectedDate, $event)"
-                />
-
-                <WeekStatsView
-                  v-else
-                  :stats="weekStats"
-                  :week-label="weekLabel"
-                  :week-index="activeStatsWeek.number"
-                  @back="closeSundayStats"
-                />
-              </div>
-              </div>
-            </component>
-          </DayFlipbook>
-        </section>
-
-        <section v-else-if="viewMode === 'ending'" key="ending" class="view-stage paper-surface">
+        <section v-if="viewMode === 'ending'" key="ending" class="view-stage paper-surface">
           <CampaignEndingView
             :stats="endingStats"
             @back="selectDate(CAMPAIGN_END)"
@@ -1403,14 +1400,12 @@ onMounted(async () => {
           />
         </section>
 
-        <section v-else key="settings" class="view-stage paper-surface">
+        <section v-else-if="viewMode === 'settings'" key="settings" class="view-stage paper-surface">
           <SettingsView
             :model-value="fontFamily"
-            :day-page-transition="dayPageTransition"
             :quote-source="quoteSource"
             :hitokoto-categories="hitokotoCategories"
             @update:model-value="store.setFontFamily"
-            @update:day-page-transition="store.setDayPageTransition"
             @update:quote-source="store.setQuoteSource"
             @update:hitokoto-categories="store.setHitokotoCategories"
             @back="navigateView('day')"
@@ -1604,7 +1599,7 @@ onMounted(async () => {
             />
             <v-list-item
               prepend-icon="mdi-book-edit-outline"
-              title="日结 / 日记"
+              title="日记"
               subtitle="当日有效目标均标记为完成或未完成后解锁，内容支持 Markdown，并自动保存在本地。"
             />
             <v-list-item
@@ -1702,53 +1697,6 @@ onMounted(async () => {
 
 .day-stage {
   perspective: 1200px;
-}
-
-.day-page {
-  padding-bottom: calc(30px + env(safe-area-inset-bottom));
-  touch-action: pan-y;
-}
-
-.day-flipbook-static {
-  height: 100%;
-  inset: 0;
-  position: absolute;
-  width: 100%;
-}
-
-.day-body {
-  margin: 0 auto;
-  max-width: 354px;
-  padding: 0 18px 28px;
-  position: relative;
-}
-
-.day-body :deep(.week-stats-view) {
-  height: auto;
-  overflow: visible;
-  padding-inline: 0;
-}
-
-.week-jump-wrap {
-  display: flex;
-  justify-content: flex-end;
-  margin: -8px 0 0;
-}
-
-.reward-notice {
-  margin: 0 0 14px;
-}
-
-.reward-notice__title {
-  font-weight: 600;
-  letter-spacing: 0.04em;
-}
-
-.reward-notice__detail {
-  margin-top: 4px;
-  color: rgba(var(--v-theme-on-surface), 0.72);
-  font-size: 0.82rem;
-  line-height: 1.65;
 }
 
 .alternate-menu {
@@ -1897,11 +1845,6 @@ onMounted(async () => {
 }
 
 @media (max-width: 360px) {
-  .day-body {
-    max-width: 332px;
-    padding-inline: 14px;
-  }
-
   .goal-lock-actions {
     grid-template-columns: 1fr;
   }
@@ -1923,23 +1866,6 @@ onMounted(async () => {
   .view-stage {
     left: 286px;
     width: calc(100% - 286px);
-  }
-
-  .day-page {
-    display: grid;
-    grid-template-columns: minmax(340px, 0.9fr) minmax(480px, 1.2fr);
-    align-items: start;
-  }
-
-  .day-body {
-    width: 100%;
-    max-width: 680px;
-    padding: 72px 48px 56px;
-  }
-
-  .week-jump-wrap {
-    margin-top: 0;
-    margin-bottom: 8px;
   }
 
   .tool-drawer {

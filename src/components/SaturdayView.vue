@@ -1,16 +1,28 @@
 <script setup>
-import { nextTick, ref } from "vue";
+import { nextTick, ref, watch } from "vue";
 
 const props = defineProps({
+  date: {
+    type: String,
+    default: "",
+  },
   items: {
     type: Array,
     default: () => [],
+  },
+  labelId: {
+    type: String,
+    default: "saturday-title",
   },
 });
 
 const emit = defineEmits(["update-item", "cycle", "remove", "add", "add-many"]);
 const draft = ref("");
 const draftField = ref(null);
+
+watch(() => props.date, () => {
+  draft.value = "";
+});
 
 function statusIcon(item) {
   if (item.isExempt) return "mdi-gift-outline";
@@ -38,8 +50,8 @@ function onPaste(event) {
 </script>
 
 <template>
-  <section class="saturday-view px-5 pb-8" aria-labelledby="saturday-title">
-    <h2 id="saturday-title" class="saturday-title">今日总目标</h2>
+  <section class="saturday-view px-5 pb-8" :aria-labelledby="labelId">
+    <h2 :id="labelId" class="saturday-title">今日总目标</h2>
 
     <v-fade-transition group>
       <div
@@ -154,21 +166,15 @@ function onPaste(event) {
 }
 
 .saturday-row--missed::before {
-  background-image: url("/assets/brush-alert.png");
-  background-position: center;
-  background-repeat: no-repeat;
-  background-size:
-    calc(100% - var(--saturday-alert-inset-x))
-    calc(100% - var(--saturday-alert-inset-y));
+  background: rgba(var(--v-theme-error), 0.05);
+  border: 1px solid rgba(var(--v-theme-error), 0.16);
+  border-radius: 8px;
   content: "";
-  inset: 0;
-  opacity: 0.58;
+  inset:
+    var(--saturday-alert-inset-y)
+    var(--saturday-alert-inset-x);
   pointer-events: none;
   position: absolute;
-}
-
-:global(.v-theme--poeticNight) .saturday-row--missed::before {
-  background-image: url("/assets/brush-alert-dark.png");
 }
 
 .saturday-row--completed .saturday-input,

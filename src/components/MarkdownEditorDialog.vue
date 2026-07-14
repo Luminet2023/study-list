@@ -192,7 +192,7 @@ function applyTool(tool) {
     <v-card class="markdown-editor-card" color="surface" elevation="16">
       <v-toolbar class="editor-heading" color="transparent" density="comfortable">
         <v-icon class="ml-4" icon="mdi-book-edit-outline" color="primary" />
-        <v-toolbar-title>日结 / 日记</v-toolbar-title>
+        <v-toolbar-title>日记</v-toolbar-title>
         <v-btn icon="mdi-close" variant="text" aria-label="关闭编辑器" @click="close" />
       </v-toolbar>
 

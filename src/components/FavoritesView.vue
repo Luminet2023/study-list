@@ -52,7 +52,7 @@ const formatLikedAt = (value) => {
     </v-toolbar>
 
     <p class="view-caption px-4 mt-3 mb-4">
-      喜欢过的句子，依点赞时间由早到晚安静陈列。轻触复制，让它陪你去往别处。
+     轻触复制，让它陪你去往别处。
     </p>
 
     <v-fade-transition mode="out-in">

@@ -1,10 +1,18 @@
 <script setup>
-import { computed, ref } from "vue";
+import { computed, ref, watch } from "vue";
 
 import MarkdownContent from "./MarkdownContent.vue";
 import MarkdownEditorDialog from "./MarkdownEditorDialog.vue";
 
 const props = defineProps({
+  active: {
+    type: Boolean,
+    default: true,
+  },
+  date: {
+    type: String,
+    default: "",
+  },
   items: {
     type: Array,
     default: () => [],
@@ -33,6 +41,10 @@ const props = defineProps({
 
 const emit = defineEmits(["cycle", "request-lock", "unlock", "update-item", "update:diary"]);
 const journalDialog = ref(false);
+
+watch(() => props.date, () => {
+  journalDialog.value = false;
+});
 
 const editableSlots = new Set([4, 6, 7]);
 
@@ -121,7 +133,7 @@ const saveJournal = (value) => {
 </script>
 
 <template>
-  <v-fade-transition appear>
+  <v-fade-transition :appear="active">
     <section
       class="workday-list"
       :class="{ 'workday-list--compact': compact }"
@@ -267,7 +279,7 @@ const saveJournal = (value) => {
 
         <div class="diary-section__heading d-flex align-center ga-2 mb-2">
           <v-icon icon="mdi-book-open-page-variant-outline" size="18" />
-          <span>日结 / 日记</span>
+          <span>日记</span>
           <v-spacer />
           <v-chip
             :color="journalUnlocked ? 'primary' : undefined"
@@ -469,14 +481,7 @@ const saveJournal = (value) => {
 }
 
 :deep(.study-item--missed.v-expansion-panel) {
-  background-image: url("/assets/brush-alert.png");
-  background-repeat: no-repeat;
-  background-position: center;
-  background-size: calc(100% - 8px) calc(100% - 6px);
-}
-
-:global(.v-theme--poeticNight) :deep(.study-item--missed.v-expansion-panel) {
-  background-image: url("/assets/brush-alert-dark.png");
+  background-color: rgba(var(--v-theme-error), 0.05);
 }
 
 :deep(.study-item--missed .study-item__content) {
