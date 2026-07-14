@@ -14,6 +14,16 @@
     "not_found_handling": "single-page-application",
     "run_worker_first": ["/api", "/api/*"]
   },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": ["UserSyncCoordinator"]
+    },
+    {
+      "tag": "v2-retire-user-sync",
+      "deleted_classes": ["UserSyncCoordinator"]
+    }
+  ],
   "observability": {
     "enabled": true,
     "head_sampling_rate": 1
