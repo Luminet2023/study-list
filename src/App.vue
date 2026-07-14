@@ -1111,18 +1111,6 @@ onMounted(async () => {
         <template #append>
           <div class="drawer-persistence">
             <v-list-item
-              class="text-caption text-medium-emphasis"
-              prepend-icon="mdi-database-check-outline"
-              :title="
-                store.saving.value
-                  ? '正在写入本地…'
-                  : store.pendingSave.value
-                    ? '等待批量保存…'
-                    : '内容已在本地保存'
-              "
-            />
-            <v-divider />
-            <v-list-item
               v-if="auth.user.value"
               class="cloud-account-item"
               :title="cloudSyncTitle"
