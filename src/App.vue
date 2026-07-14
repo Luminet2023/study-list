@@ -74,6 +74,7 @@ const returnDate = ref(null);
 const pageDirection = ref("page-next");
 const dayFlipbook = ref(null);
 const dayTurnBusy = ref(false);
+const dayTurnEarState = ref(null);
 const dayScroll = ref(null);
 const snackbarQueue = ref([]);
 const spinning = ref(false);
@@ -318,6 +319,17 @@ const dateMeta = computed(() => {
 const selectedIndex = computed(() => campaignDates.indexOf(selectedDate.value));
 const previousDate = computed(() => campaignDates[selectedIndex.value - 1] ?? null);
 const nextDate = computed(() => campaignDates[selectedIndex.value + 1] ?? null);
+const previousEarLabel = computed(() =>
+  dayTurnEarState.value?.previousLabel ?? earLabel(previousDate.value),
+);
+const nextEarLabel = computed(() =>
+  dayTurnEarState.value?.nextLabel
+  ?? (selectedDate.value === CAMPAIGN_END ? "旅程终章" : earLabel(nextDate.value)),
+);
+const nextEarAriaLabel = computed(() =>
+  dayTurnEarState.value?.nextAriaLabel
+  ?? (selectedDate.value === CAMPAIGN_END ? "进入旅程终章" : "后一天"),
+);
 
 function routeParam(value) {
   return Array.isArray(value) ? value[0] : value;
@@ -377,6 +389,19 @@ function earLabel(date) {
   if (!date) return "";
   const [, month, day] = date.split("-");
   return `${month}/${day} ${getWeekdayName(date).slice(-2)}`;
+}
+
+function handleDayTurnBusy(value) {
+  const nextBusy = Boolean(value);
+  if (nextBusy && !dayTurnBusy.value) {
+    dayTurnEarState.value = {
+      previousLabel: earLabel(previousDate.value),
+      nextLabel: selectedDate.value === CAMPAIGN_END ? "旅程终章" : earLabel(nextDate.value),
+      nextAriaLabel: selectedDate.value === CAMPAIGN_END ? "进入旅程终章" : "后一天",
+    };
+  }
+  dayTurnBusy.value = nextBusy;
+  if (!nextBusy) dayTurnEarState.value = null;
 }
 
 function enqueue(text, color = "primary", timeout = 2600) {
@@ -1229,14 +1254,14 @@ onMounted(async () => {
         <section v-if="viewMode === 'day'" key="day" class="day-stage paper-surface">
           <AdjacentDayEar
             side="left"
-            :label="earLabel(previousDate)"
+            :label="previousEarLabel"
             :disabled="dayTurnBusy || !previousDate"
             @navigate="navigateDate(-1)"
           />
           <AdjacentDayEar
             side="right"
-            :label="selectedDate === CAMPAIGN_END ? '旅程终章' : earLabel(nextDate)"
-            :aria-label="selectedDate === CAMPAIGN_END ? '进入旅程终章' : '后一天'"
+            :label="nextEarLabel"
+            :aria-label="nextEarAriaLabel"
             :disabled="dayTurnBusy"
             @navigate="advanceFromDay"
           />
@@ -1244,7 +1269,7 @@ onMounted(async () => {
           <DayFlipbook
             ref="dayFlipbook"
             :enabled="dayPageTransition === DAY_PAGE_TRANSITION.FLIPBOOK"
-            @update:busy="dayTurnBusy = $event"
+            @update:busy="handleDayTurnBusy"
             @animation-error="enqueue('3D 翻页暂不可用，已完成日期切换', 'error', 4200)"
           >
             <component :is="dayTransitionComponent" v-bind="dayTransitionBindings">

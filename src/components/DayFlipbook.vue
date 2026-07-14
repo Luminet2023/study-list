@@ -1,5 +1,5 @@
 <script setup>
-import { nextTick, onBeforeUnmount, ref } from "vue";
+import { nextTick, onBeforeUnmount, ref, watch } from "vue";
 
 import { orderFlipbookPages } from "../lib/dayPageTransition.js";
 
@@ -10,7 +10,7 @@ const props = defineProps({
   },
   duration: {
     type: Number,
-    default: 760,
+    default: 600,
   },
 });
 
@@ -20,11 +20,13 @@ const host = ref(null);
 const book = ref(null);
 const overlayVisible = ref(false);
 const busy = ref(false);
+const phase = ref("idle");
 
 let flipbookEngine = null;
 let flipbookEnginePromise = null;
 let flipbookEventHandler = null;
 let finishActiveTurn = null;
+let cancelEnginePreload = null;
 let destroyed = false;
 
 function setBusy(value) {
@@ -103,8 +105,22 @@ function revealDestinationUnderlay(engineHost, direction, destinationPage) {
     : ".st-flipbook-page-left";
   const underlay = engineHost.querySelector(selector);
   if (!underlay) return;
-  underlay.replaceChildren(destinationPage.cloneNode(true));
+  // Strata clones every input page during initialization, so the original
+  // destination wrapper is free to become the static page below the leaf.
+  // Moving it avoids one more deep clone of the complete Day DOM.
+  underlay.replaceChildren(destinationPage);
   underlay.setAttribute("data-st-flip-blank", "false");
+}
+
+function showHoldingPage(page) {
+  const holdingPage = document.createElement("div");
+  holdingPage.className = "day-flipbook__holding";
+  holdingPage.setAttribute("aria-hidden", "true");
+  holdingPage.setAttribute("inert", "");
+  holdingPage.append(page);
+  book.value.replaceChildren(holdingPage);
+  phase.value = "holding";
+  overlayVisible.value = true;
 }
 
 function cleanupBook() {
@@ -123,15 +139,32 @@ function cleanupBook() {
   flipbookEngine = null;
   book.value?.removeAttribute("data-engine-ready");
   book.value?.replaceChildren();
+  phase.value = "idle";
   overlayVisible.value = false;
 }
 
-function afterPaint() {
-  return new Promise((resolve) => {
-    const requestFrame = globalThis.requestAnimationFrame ?? ((callback) => setTimeout(callback, 0));
-    requestFrame(() => requestFrame(resolve));
-  });
+function scheduleEnginePreload() {
+  cancelEnginePreload?.();
+  if (typeof globalThis.requestIdleCallback === "function") {
+    const handle = globalThis.requestIdleCallback(
+      () => void loadFlipbookEngine().catch(() => {}),
+      { timeout: 1200 },
+    );
+    cancelEnginePreload = () => globalThis.cancelIdleCallback?.(handle);
+    return;
+  }
+  const handle = globalThis.setTimeout?.(() => void loadFlipbookEngine().catch(() => {}), 0);
+  cancelEnginePreload = () => globalThis.clearTimeout?.(handle);
 }
+
+watch(
+  () => props.enabled,
+  (enabled) => {
+    if (enabled) scheduleEnginePreload();
+    else cancelEnginePreload?.();
+  },
+  { immediate: true },
+);
 
 async function turn(direction, commitNavigation) {
   if (typeof commitNavigation !== "function") {
@@ -146,53 +179,59 @@ async function turn(direction, commitNavigation) {
       return true;
     }
 
-    let createFlipbook;
-    try {
-      createFlipbook = await loadFlipbookEngine();
-    } catch (error) {
-      await commitNavigation();
-      emit("animation-error", error);
-      return true;
-    }
-    if (destroyed || !props.enabled) {
+    const currentPage = host.value?.querySelector?.(".day-page");
+    if (!currentPage || !book.value || !host.value) {
       await commitNavigation();
       return true;
     }
 
-    const currentPage = host.value?.querySelector?.(".day-page");
-    if (!currentPage) {
-      await commitNavigation();
-      return true;
-    }
-    const previousSnapshot = createSnapshot(currentPage);
+    const previousPage = wrapSnapshot(createSnapshot(currentPage));
+    cancelEnginePreload?.();
+    const engineResultPromise = loadFlipbookEngine().then(
+      (createFlipbook) => ({ createFlipbook, error: null }),
+      (error) => ({ createFlipbook: null, error }),
+    );
+
+    // Freeze the source page before changing selectedDate. Vue flushes the
+    // hidden live page only after the old snapshot is already visible.
+    showHoldingPage(previousPage);
+    await nextTick();
+    restoreSnapshotScrollPositions();
 
     await commitNavigation();
     await nextTick();
-    await afterPaint();
 
     const nextPage = host.value?.querySelector?.(".day-page");
-    if (destroyed || !nextPage || !book.value || !host.value) return true;
-    const nextSnapshot = createSnapshot(nextPage);
-    const ordered = orderFlipbookPages(direction, previousSnapshot, nextSnapshot);
-    const pages = ordered.pages.map(wrapSnapshot);
+    if (destroyed || !props.enabled || !nextPage || !book.value || !host.value) return true;
+
+    const { createFlipbook, error: engineError } = await engineResultPromise;
+    if (engineError || !createFlipbook) {
+      emit("animation-error", engineError ?? new Error("Strata Flipbook failed to load"));
+      return true;
+    }
+    if (destroyed || !book.value || !host.value) return true;
+
+    const destinationPage = wrapSnapshot(createSnapshot(nextPage));
+    const ordered = orderFlipbookPages(direction, previousPage, destinationPage);
+    const pages = ordered.pages;
     const engineHost = document.createElement("div");
     engineHost.className = "strata-flipbook-engine";
     engineHost.dataset.flipbookEngine = "strata";
     engineHost.style.setProperty("--st-flip-duration", `${Math.max(120, props.duration)}ms`);
-    book.value.replaceChildren(engineHost);
-
-    overlayVisible.value = true;
-    await nextTick();
+    engineHost.style.setProperty("--st-flip-easing", "cubic-bezier(0.4, 0, 0.2, 1)");
+    engineHost.style.setProperty("--st-flip-skew-k", "0deg");
 
     await new Promise((resolve, reject) => {
       let targetRequested = false;
       let settled = false;
       let fallbackTimer;
+      let startFrame;
 
       const finish = () => {
         if (settled) return;
         settled = true;
         globalThis.clearTimeout?.(fallbackTimer);
+        globalThis.cancelAnimationFrame?.(startFrame);
         cleanupBook();
         resolve();
       };
@@ -221,30 +260,38 @@ async function turn(direction, commitNavigation) {
           }
         };
         flipbookEngine.on("flip", flipbookEventHandler);
-        flipbookEngine.goTo(ordered.startSpread);
+        if (ordered.startSpread !== 0) flipbookEngine.goTo(ordered.startSpread);
+
+        // The detached engine is fully populated before it replaces the hold
+        // layer, making the visual swap atomic instead of exposing a blank scene.
+        book.value.replaceChildren(engineHost);
         restoreSnapshotScrollPositions();
         book.value.dataset.engineReady = "true";
-        targetRequested = true;
-        globalThis.requestAnimationFrame?.(() => {
+        phase.value = "preparing";
+
+        const startAnimation = () => {
+          startFrame = undefined;
+          if (settled || destroyed || !flipbookEngine) return;
+          phase.value = "animating";
+          targetRequested = true;
           try {
             if (direction === "previous") flipbookEngine.prev();
             else flipbookEngine.next();
-            revealDestinationUnderlay(
-              engineHost,
-              direction,
-              pages[ordered.targetSpread],
-            );
+            revealDestinationUnderlay(engineHost, direction, pages[ordered.targetSpread]);
             restoreSnapshotScrollPositions();
           } catch (error) {
+            globalThis.clearTimeout?.(fallbackTimer);
             reject(error);
+            return;
           }
-        }) ?? (() => {
-          if (direction === "previous") flipbookEngine.prev();
-          else flipbookEngine.next();
-          revealDestinationUnderlay(engineHost, direction, pages[ordered.targetSpread]);
-          restoreSnapshotScrollPositions();
-        })();
-        fallbackTimer = globalThis.setTimeout?.(finish, Math.max(120, props.duration) + 900);
+        };
+
+        fallbackTimer = globalThis.setTimeout?.(finish, Math.max(120, props.duration) + 1200);
+        if (typeof globalThis.requestAnimationFrame === "function") {
+          startFrame = globalThis.requestAnimationFrame(startAnimation);
+        } else {
+          startAnimation();
+        }
       } catch (error) {
         reject(error);
       }
@@ -261,6 +308,7 @@ async function turn(direction, commitNavigation) {
 
 onBeforeUnmount(() => {
   destroyed = true;
+  cancelEnginePreload?.();
   finishActiveTurn?.();
   cleanupBook();
   setBusy(false);
@@ -275,6 +323,7 @@ defineExpose({ turn });
     class="day-flipbook"
     :class="{ 'day-flipbook--turning': overlayVisible }"
     :data-page-transition="enabled ? 'flipbook' : 'classic'"
+    :data-flipbook-phase="phase"
     :aria-busy="busy"
   >
     <div class="day-flipbook__live" :inert="overlayVisible || undefined">
@@ -301,10 +350,6 @@ defineExpose({ turn });
   width: 100%;
 }
 
-.day-flipbook {
-  perspective: 2200px;
-}
-
 .day-flipbook--turning .day-flipbook__live {
   visibility: hidden;
 }
@@ -312,12 +357,22 @@ defineExpose({ turn });
 .day-flipbook__overlay {
   overflow: hidden;
   pointer-events: none;
-  transform-style: preserve-3d;
   z-index: 4;
 }
 
 .strata-flipbook {
   background: rgb(var(--v-theme-background));
+  contain: layout paint;
+  isolation: isolate;
+}
+
+.strata-flipbook :deep(.day-flipbook__holding) {
+  background: rgb(var(--v-theme-background));
+  height: 100%;
+  inset: 0;
+  overflow: hidden;
+  position: absolute;
+  width: 100%;
 }
 
 .strata-flipbook :deep(.strata-flipbook-engine),
@@ -326,6 +381,11 @@ defineExpose({ turn });
   height: 100%;
   max-width: none;
   width: 100%;
+}
+
+.strata-flipbook :deep(.st-flipbook[data-st-flip-open="true"] .st-flipbook-scene) {
+  animation: none !important;
+  opacity: 1;
 }
 
 .strata-flipbook :deep(.st-flipbook-book) {
@@ -360,6 +420,15 @@ defineExpose({ turn });
   width: 100%;
 }
 
+.strata-flipbook :deep(.st-flipbook-flip-front),
+.strata-flipbook :deep(.st-flipbook-flip-back) {
+  clip-path: none !important;
+}
+
+.strata-flipbook :deep(.st-flipbook-flip-page::after) {
+  display: none;
+}
+
 .strata-flipbook :deep([data-st-flip-direction="forward"] .st-flipbook-flip-page) {
   transform-origin: left center;
 }
@@ -373,6 +442,12 @@ defineExpose({ turn });
   height: 100%;
   overflow: hidden;
   width: 100%;
+}
+
+.strata-flipbook :deep(.day-flipbook-page *) {
+  animation: none !important;
+  caret-color: transparent !important;
+  transition: none !important;
 }
 
 .strata-flipbook :deep(.day-page) {
