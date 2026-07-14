@@ -56,8 +56,11 @@ test("minimal mode hides the header seal and adjacent day buttons", async () => 
 
   assert.match(app, /<AdjacentDayEar\s+v-if="!minimalMode"\s+side="left"/u);
   assert.match(app, /<AdjacentDayEar\s+v-if="!minimalMode"\s+side="right"/u);
+  assert.equal((app.match(/<AdjacentDayEar/gu) ?? []).length, 2);
+  assert.match(app, /<DayPage\s+v-memo="\[[\s\S]+?minimalMode,/u);
   assert.match(dayPage, /<PoeticHeader[\s\S]+?:minimal-mode="minimalMode"/u);
   assert.match(header, /<v-img\s+v-if="!minimalMode"\s+class="seal-mark"/u);
+  assert.equal((header.match(/seal-mark\.png/gu) ?? []).length, 1);
 });
 
 test("minimal mode removes the goal lock gate while keeping tasks editable", async () => {

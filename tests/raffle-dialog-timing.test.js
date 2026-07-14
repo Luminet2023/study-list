@@ -20,14 +20,19 @@ test("raffle result keeps the dialog open before closing and enqueueing the toas
   assert.match(source, /const DRAW_RESULT_DIALOG_HOLD_MS = 5000;/u);
 
   const resultIndex = executeDraw.indexOf("const result = await store.performDraw");
+  const settledIndex = executeDraw.indexOf("drawSettled.value = true");
   const holdIndex = executeDraw.indexOf("setTimeout(resolve, DRAW_RESULT_DIALOG_HOLD_MS)");
   const closeIndex = executeDraw.indexOf("spinning.value = false");
 
   assert.ok(resultIndex >= 0, "应先取得抽奖结果");
+  assert.ok(settledIndex > resultIndex, "取得结果后应立即停止转盘");
+  assert.ok(holdIndex > settledIndex, "转盘停止后才开始保留 Dialog 5 秒");
   assert.ok(holdIndex > resultIndex, "取得结果后应保留 Dialog 5 秒");
   assert.ok(closeIndex > holdIndex, "等待结束后才应关闭 Dialog");
   assert.doesNotMatch(executeDraw, /enqueue\(/u, "Dialog 退场前不应入队结果 Toast");
   assert.match(raffleView, /@after-leave="emit\('draw-dialog-closed'\)"/u);
   assert.match(source, /@draw-dialog-closed="handleDrawDialogClosed"/u);
   assert.match(dialogClosedHandler, /if \(resultNotice\) enqueue\(/u);
+  assert.match(raffleView, /'draw-wheel--settled': drawSettled/u);
+  assert.match(raffleView, /animation-play-state: paused;/u);
 });

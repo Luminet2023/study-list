@@ -72,6 +72,7 @@ const dayTurnBusy = ref(false);
 const dayTurnEarState = ref(null);
 const snackbarQueue = ref([]);
 const spinning = ref(false);
+const drawSettled = ref(false);
 const DRAW_ANIMATION_DURATION_MS = 1800;
 const DRAW_RESULT_DIALOG_HOLD_MS = 5000;
 const lastResult = ref(null);
@@ -890,6 +891,7 @@ async function resolveSlot6(redistribute) {
 }
 
 async function executeDraw(mode, redistribute) {
+  drawSettled.value = false;
   spinning.value = true;
   try {
     await new Promise((resolve) => setTimeout(resolve, DRAW_ANIMATION_DURATION_MS));
@@ -905,6 +907,7 @@ async function executeDraw(mode, redistribute) {
       text: won ? "恭喜中奖，请在今日抽签中兑现" : "本次未中，记录已保存",
       color: won ? "secondary" : "outline",
     };
+    drawSettled.value = true;
     await new Promise((resolve) => setTimeout(resolve, DRAW_RESULT_DIALOG_HOLD_MS));
   } catch (error) {
     pendingDrawNotice = {
@@ -920,6 +923,7 @@ async function executeDraw(mode, redistribute) {
 function handleDrawDialogClosed() {
   const resultNotice = pendingDrawNotice;
   pendingDrawNotice = null;
+  drawSettled.value = false;
   if (resultNotice) enqueue(resultNotice.text, resultNotice.color, resultNotice.timeout);
 }
 
@@ -1450,6 +1454,7 @@ onMounted(async () => {
             :draws-today="drawsToday"
             :last-result="lastResult"
             :spinning="spinning"
+            :draw-settled="drawSettled"
             :probability-summary="probabilitySummary"
             :award-slot6-confirmation="awardSlot6Confirmation"
             :redeeming-draw-id="redeemingDrawId"

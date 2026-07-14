@@ -31,6 +31,10 @@ const props = defineProps({
     type: Boolean,
     default: false,
   },
+  drawSettled: {
+    type: Boolean,
+    default: false,
+  },
   probabilitySummary: {
     type: Array,
     default: () => [],
@@ -369,14 +373,27 @@ function confirmPaperClaim() {
               <VIcon icon="mdi-dice-multiple-outline" size="22" />
             </VAvatar>
           </template>
-          <VCardTitle class="draw-dialog-title">正在抽取今日签</VCardTitle>
-          <VCardSubtitle>轮盘转动中，请稍候片刻</VCardSubtitle>
+          <VCardTitle class="draw-dialog-title">
+            {{ drawSettled ? "今日签已落定" : "正在抽取今日签" }}
+          </VCardTitle>
+          <VCardSubtitle>
+            {{ drawSettled ? "转盘已停，结果将在片刻后显示" : "轮盘转动中，请稍候片刻" }}
+          </VCardSubtitle>
         </VCardItem>
 
         <VCardText class="draw-dialog-body">
-          <div class="draw-wheel-shell" role="img" aria-label="抽奖轮盘正在旋转">
+          <div
+            class="draw-wheel-shell"
+            :class="{ 'draw-wheel-shell--settled': drawSettled }"
+            role="img"
+            :aria-label="drawSettled ? '抽奖轮盘已停止' : '抽奖轮盘正在旋转'"
+          >
             <span class="draw-wheel-pointer" aria-hidden="true" />
-            <div class="draw-wheel draw-wheel--spinning" aria-hidden="true">
+            <div
+              class="draw-wheel draw-wheel--spinning"
+              :class="{ 'draw-wheel--settled': drawSettled }"
+              aria-hidden="true"
+            >
               <span
                 v-for="(label, index) in wheelEntries"
                 :key="`${label}-${index}`"
@@ -393,9 +410,10 @@ function confirmPaperClaim() {
 
           <VProgressLinear
             class="draw-progress"
-            color="primary"
+            :color="drawSettled ? 'secondary' : 'primary'"
             height="4"
-            indeterminate
+            :indeterminate="!drawSettled"
+            :model-value="drawSettled ? 100 : undefined"
             rounded
           />
           <p class="draw-dialog-note">分区用于展示抽取过程，实际结果仍按今日动态概率池计算。</p>
@@ -738,6 +756,11 @@ function confirmPaperClaim() {
 
 .draw-wheel--spinning {
   animation: draw-wheel-spin 560ms linear infinite;
+}
+
+.draw-wheel--settled,
+.draw-wheel-shell--settled .draw-wheel-pointer {
+  animation-play-state: paused;
 }
 
 .draw-wheel-label {
