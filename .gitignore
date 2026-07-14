@@ -1,6 +1,9 @@
 node_modules/
 dist/
 .npm-cache/
+.wrangler/
+.dev.vars
+tmp/
 qa/
 *.log
 .DS_Store
