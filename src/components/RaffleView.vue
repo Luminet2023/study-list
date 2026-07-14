@@ -1,5 +1,13 @@
 <script setup>
-import { computed, ref } from "vue";
+import { computed, nextTick, onBeforeUnmount, ref, watch } from "vue";
+
+import {
+  RAFFLE_WHEEL_SEGMENTS,
+  getRaffleWheelLandingDuration,
+  getRaffleWheelLandingRotation,
+  getRaffleWheelTargetRotation,
+  normalizeWheelRotation,
+} from "./raffleWheel.js";
 
 const props = defineProps({
   dailyAvailable: {
@@ -35,6 +43,10 @@ const props = defineProps({
     type: Boolean,
     default: false,
   },
+  drawLandingTarget: {
+    type: Object,
+    default: null,
+  },
   probabilitySummary: {
     type: Array,
     default: () => [],
@@ -56,10 +68,14 @@ const emit = defineEmits([
   "back",
   "rules",
   "resolve-award-slot6",
+  "draw-wheel-settled",
   "draw-dialog-closed",
 ]);
 
 const paperDialog = ref(false);
+const wheelElement = ref(null);
+let landingAnimation = null;
+let landingRun = 0;
 
 const paperClaimsLeft = computed(() => Math.max(0, 3 - props.paperClaimsUsed));
 const campaignLocked = computed(() => props.campaignPhase !== "active");
@@ -117,13 +133,7 @@ const normalizedDraws = computed(() =>
   }),
 );
 
-const wheelEntries = computed(() => {
-  const labels = props.probabilitySummary
-    .map((entry) => String(entry?.label ?? "").trim())
-    .filter(Boolean);
-  const fallbacks = ["未中", "免任务", "免周六", "免全天", "免整周", "好运", "喘口气", "再接再厉"];
-  return [...new Set([...labels, ...fallbacks])].slice(0, 8);
-});
+const wheelEntries = RAFFLE_WHEEL_SEGMENTS;
 
 function shortWheelLabel(label) {
   return String(label)
@@ -137,6 +147,78 @@ function wheelLabelStyle(index) {
   const angle = index * 45;
   return { transform: `rotate(${angle}deg) translateY(-88px) rotate(${-angle}deg)` };
 }
+
+function rotationFromTransform(transform) {
+  if (!transform || transform === "none") return 0;
+  const matrix = new DOMMatrixReadOnly(transform);
+  return normalizeWheelRotation((Math.atan2(matrix.b, matrix.a) * 180) / Math.PI);
+}
+
+function resetWheelAnimation() {
+  landingRun += 1;
+  landingAnimation?.cancel();
+  landingAnimation = null;
+  const wheel = wheelElement.value;
+  if (!wheel) return;
+  wheel.style.removeProperty("animation");
+  wheel.style.removeProperty("transform");
+}
+
+async function landWheel(target) {
+  const run = ++landingRun;
+  await nextTick();
+  const wheel = wheelElement.value;
+  if (!wheel || !target?.prizeKind) return;
+
+  const currentRotation = rotationFromTransform(getComputedStyle(wheel).transform);
+  const targetRotation = getRaffleWheelTargetRotation(target.prizeKind);
+  const landingRotation = getRaffleWheelLandingRotation(currentRotation, target.prizeKind);
+  const landingDuration = getRaffleWheelLandingDuration(currentRotation, target.prizeKind);
+  wheel.style.animation = "none";
+  wheel.style.transform = `rotate(${currentRotation}deg)`;
+
+  const reducedMotion = matchMedia("(prefers-reduced-motion: reduce)").matches;
+  if (!reducedMotion) {
+    try {
+      landingAnimation = wheel.animate(
+        [
+          { transform: `rotate(${currentRotation}deg)` },
+          { transform: `rotate(${landingRotation}deg)` },
+        ],
+        {
+          duration: landingDuration,
+          easing: "cubic-bezier(0.33, 0.66, 0.66, 1)",
+          fill: "forwards",
+        },
+      );
+      await landingAnimation.finished;
+    } catch {
+      if (run !== landingRun) return;
+    }
+  }
+
+  if (run !== landingRun || wheelElement.value !== wheel) return;
+  wheel.style.transform = `rotate(${targetRotation}deg)`;
+  landingAnimation?.cancel();
+  landingAnimation = null;
+  emit("draw-wheel-settled");
+}
+
+watch(
+  () => props.drawLandingTarget,
+  (target) => {
+    if (target) void landWheel(target);
+  },
+);
+
+watch(
+  () => props.spinning,
+  (active) => {
+    if (active && !props.drawLandingTarget) resetWheelAnimation();
+  },
+);
+
+onBeforeUnmount(resetWheelAnimation);
 
 const awardSlot6Dates = computed(() =>
   Array.isArray(props.awardSlot6Confirmation?.dates)
@@ -390,17 +472,18 @@ function confirmPaperClaim() {
           >
             <span class="draw-wheel-pointer" aria-hidden="true" />
             <div
+              ref="wheelElement"
               class="draw-wheel draw-wheel--spinning"
               :class="{ 'draw-wheel--settled': drawSettled }"
               aria-hidden="true"
             >
               <span
-                v-for="(label, index) in wheelEntries"
-                :key="`${label}-${index}`"
+                v-for="(entry, index) in wheelEntries"
+                :key="entry.id"
                 class="draw-wheel-label"
                 :style="wheelLabelStyle(index)"
               >
-                {{ shortWheelLabel(label) }}
+                {{ shortWheelLabel(entry.label) }}
               </span>
             </div>
             <div class="draw-wheel-hub" aria-hidden="true">
@@ -758,9 +841,13 @@ function confirmPaperClaim() {
   animation: draw-wheel-spin 560ms linear infinite;
 }
 
-.draw-wheel--settled,
-.draw-wheel-shell--settled .draw-wheel-pointer {
+.draw-wheel--settled {
   animation-play-state: paused;
+}
+
+.draw-wheel-shell--settled .draw-wheel-pointer {
+  animation: none;
+  transform: rotate(0deg);
 }
 
 .draw-wheel-label {

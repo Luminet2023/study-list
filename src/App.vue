@@ -73,7 +73,9 @@ const dayTurnEarState = ref(null);
 const snackbarQueue = ref([]);
 const spinning = ref(false);
 const drawSettled = ref(false);
+const drawLandingTarget = ref(null);
 const DRAW_ANIMATION_DURATION_MS = 1800;
+const DRAW_WHEEL_LANDING_TIMEOUT_MS = 3000;
 const DRAW_RESULT_DIALOG_HOLD_MS = 5000;
 const lastResult = ref(null);
 const pendingDrawMode = ref(null);
@@ -91,6 +93,7 @@ const hitokotoError = ref("");
 const hitokotoRetryToken = ref(0);
 const hitokotoSessionBindings = ref({});
 let pendingDrawNotice = null;
+let drawWheelSettleResolver = null;
 let pinchStartDistance = 0;
 let pinchTriggered = false;
 
@@ -892,6 +895,7 @@ async function resolveSlot6(redistribute) {
 
 async function executeDraw(mode, redistribute) {
   drawSettled.value = false;
+  drawLandingTarget.value = null;
   spinning.value = true;
   try {
     await new Promise((resolve) => setTimeout(resolve, DRAW_ANIMATION_DURATION_MS));
@@ -907,7 +911,12 @@ async function executeDraw(mode, redistribute) {
       text: won ? "恭喜中奖，请在今日抽签中兑现" : "本次未中，记录已保存",
       color: won ? "secondary" : "outline",
     };
-    drawSettled.value = true;
+    const wheelSettled = waitForDrawWheelSettlement();
+    drawLandingTarget.value = {
+      key: result.drawRecord.id,
+      prizeKind: result.prize.kind,
+    };
+    await wheelSettled;
     await new Promise((resolve) => setTimeout(resolve, DRAW_RESULT_DIALOG_HOLD_MS));
   } catch (error) {
     pendingDrawNotice = {
@@ -920,10 +929,31 @@ async function executeDraw(mode, redistribute) {
   }
 }
 
+function waitForDrawWheelSettlement() {
+  return new Promise((resolve) => {
+    let timeoutId;
+    const finish = () => {
+      if (drawWheelSettleResolver !== finish) return;
+      clearTimeout(timeoutId);
+      drawWheelSettleResolver = null;
+      drawSettled.value = true;
+      resolve();
+    };
+    drawWheelSettleResolver = finish;
+    timeoutId = setTimeout(finish, DRAW_WHEEL_LANDING_TIMEOUT_MS);
+  });
+}
+
+function handleDrawWheelSettled() {
+  drawWheelSettleResolver?.();
+}
+
 function handleDrawDialogClosed() {
   const resultNotice = pendingDrawNotice;
   pendingDrawNotice = null;
   drawSettled.value = false;
+  drawLandingTarget.value = null;
+  drawWheelSettleResolver = null;
   if (resultNotice) enqueue(resultNotice.text, resultNotice.color, resultNotice.timeout);
 }
 
@@ -1455,6 +1485,7 @@ onMounted(async () => {
             :last-result="lastResult"
             :spinning="spinning"
             :draw-settled="drawSettled"
+            :draw-landing-target="drawLandingTarget"
             :probability-summary="probabilitySummary"
             :award-slot6-confirmation="awardSlot6Confirmation"
             :redeeming-draw-id="redeemingDrawId"
@@ -1464,6 +1495,7 @@ onMounted(async () => {
             @back="navigateView('day')"
             @rules="rulesDialog = true"
             @resolve-award-slot6="resolveAwardSlot6"
+            @draw-wheel-settled="handleDrawWheelSettled"
             @draw-dialog-closed="handleDrawDialogClosed"
           />
         </section>

@@ -20,13 +20,15 @@ test("raffle result keeps the dialog open before closing and enqueueing the toas
   assert.match(source, /const DRAW_RESULT_DIALOG_HOLD_MS = 5000;/u);
 
   const resultIndex = executeDraw.indexOf("const result = await store.performDraw");
-  const settledIndex = executeDraw.indexOf("drawSettled.value = true");
+  const landingIndex = executeDraw.indexOf("drawLandingTarget.value = {");
+  const settledIndex = source.indexOf("function handleDrawWheelSettled");
   const holdIndex = executeDraw.indexOf("setTimeout(resolve, DRAW_RESULT_DIALOG_HOLD_MS)");
   const closeIndex = executeDraw.indexOf("spinning.value = false");
 
   assert.ok(resultIndex >= 0, "应先取得抽奖结果");
-  assert.ok(settledIndex > resultIndex, "取得结果后应立即停止转盘");
-  assert.ok(holdIndex > settledIndex, "转盘停止后才开始保留 Dialog 5 秒");
+  assert.ok(landingIndex > resultIndex, "取得结果后应要求转盘落到对应奖项");
+  assert.ok(settledIndex >= 0, "应在转盘完成落位后记录 settled 状态");
+  assert.ok(holdIndex > landingIndex, "转盘完成落位后才开始保留 Dialog 5 秒");
   assert.ok(holdIndex > resultIndex, "取得结果后应保留 Dialog 5 秒");
   assert.ok(closeIndex > holdIndex, "等待结束后才应关闭 Dialog");
   assert.doesNotMatch(executeDraw, /enqueue\(/u, "Dialog 退场前不应入队结果 Toast");
@@ -35,4 +37,6 @@ test("raffle result keeps the dialog open before closing and enqueueing the toas
   assert.match(dialogClosedHandler, /if \(resultNotice\) enqueue\(/u);
   assert.match(raffleView, /'draw-wheel--settled': drawSettled/u);
   assert.match(raffleView, /animation-play-state: paused;/u);
+  assert.match(raffleView, /\.draw-wheel-shell--settled \.draw-wheel-pointer \{[\s\S]+?animation: none;[\s\S]+?rotate\(0deg\)/u);
+  assert.match(raffleView, /emit\("draw-wheel-settled"\)/u);
 });

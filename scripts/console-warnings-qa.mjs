@@ -161,7 +161,7 @@ if (wheelState.animationName === "none" || wheelState.labels !== 8 || wheelState
   throw new Error(`抽奖轮盘状态异常: ${JSON.stringify(wheelState)}`);
 }
 await mobilePage.screenshot({ path: "qa/implementation-raffle-wheel-dialog.png", fullPage: false });
-await wheelDialog.waitFor({ state: "hidden", timeout: 8_000 });
+await wheelDialog.waitFor({ state: "hidden", timeout: 12_000 });
 const redeemButton = mobilePage.getByRole("button", { name: "兑现奖励：免下一个工作日第 1 项", exact: true });
 await redeemButton.waitFor();
 await mobilePage.screenshot({ path: "qa/implementation-raffle-redeem-pending.png", fullPage: false });

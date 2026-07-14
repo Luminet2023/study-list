@@ -312,7 +312,7 @@ for (const [route, selector, screenshotPath] of mobileRoutes) {
       await spinningStage.waitFor();
       await page.waitForTimeout(120);
       await page.screenshot({ path: "qa/implementation-raffle-spinning.png", fullPage: false });
-      await spinningStage.waitFor({ state: "hidden", timeout: 8_000 });
+      await spinningStage.waitFor({ state: "hidden", timeout: 12_000 });
     }
   }
   if (route === "/ending") {
