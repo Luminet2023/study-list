@@ -13,6 +13,12 @@ for (
   campaignDates.push(cursor.toISOString().slice(0, 10));
 }
 
+function expectedHydratedDates(date) {
+  const position = campaignDates.indexOf(date);
+  if (position < 0) return [];
+  return campaignDates.slice(Math.max(0, position - 1), position + 2);
+}
+
 const browser = await chromium.launch({ headless: true });
 const context = await browser.newContext({
   viewport: { width: 390, height: 844 },
@@ -128,6 +134,15 @@ async function assertEngineIdentity() {
 }
 
 async function assertSingleAccessibleDayPage(expectedDate) {
+  await page.waitForFunction(
+    (date) => {
+      const root = document.querySelector(".day-flipbook");
+      return root?.dataset.hydrationAnchorDate === date
+        && root?.dataset.hydrationRadius === "1";
+    },
+    expectedDate,
+    { timeout: 1_500 },
+  );
   const result = await page.evaluate(() => {
     const pages = [...document.querySelectorAll(".day-page")];
     const isAriaHidden = (element) => {
@@ -143,11 +158,26 @@ async function assertSingleAccessibleDayPage(expectedDate) {
     );
     return {
       total: pages.length,
+      hydratedDates: pages.map((element) => element.dataset.pageDate),
       accessibleDates: accessible.map((element) => element.dataset.pageDate),
     };
   });
+  assert.deepEqual(result.hydratedDates, expectedHydratedDates(expectedDate));
   assert.deepEqual(result.accessibleDates, [expectedDate]);
   return result;
+}
+
+async function assertNoHydratedDayPages() {
+  const result = await page.locator(".day-flipbook").evaluate((root) => ({
+    hydratedCount: Number(root.dataset.hydratedPageCount),
+    dayPages: root.querySelectorAll(".day-page").length,
+    physicalPages: root.querySelectorAll("[data-day-flipbook-source]").length,
+  }));
+  assert.deepEqual(result, {
+    hydratedCount: 0,
+    dayPages: 0,
+    physicalPages: 48,
+  });
 }
 
 async function assertNoDuplicateIds() {
@@ -216,6 +246,7 @@ async function startTurnAudit(fromDate, toDate) {
       dataDateChanges: 0,
       businessMutations: 0,
       nonAdjacentBusinessMutations: 0,
+      nonAdjacentAnimatingBusinessMutations: 0,
       sawBusy: false,
       done: false,
     };
@@ -233,7 +264,12 @@ async function startTurnAudit(fromDate, toDate) {
         if (record.type === "childList" || record.type === "characterData") {
           audit.businessMutations += 1;
           const date = sourceDates.get(source);
-          if (date !== from && date !== to) audit.nonAdjacentBusinessMutations += 1;
+          if (date !== from && date !== to) {
+            audit.nonAdjacentBusinessMutations += 1;
+            if (root?.dataset.flipbookPhase === "animating") {
+              audit.nonAdjacentAnimatingBusinessMutations += 1;
+            }
+          }
         }
       }
     };
@@ -343,6 +379,7 @@ function assertTurnAudit(audit, { expectTemporaryCopy }) {
     animationFrameMax: Math.round(Math.max(0, ...frameDeltas)),
     businessMutations: audit.businessMutations,
     nonAdjacentBusinessMutations: audit.nonAdjacentBusinessMutations,
+    nonAdjacentAnimatingBusinessMutations: audit.nonAdjacentAnimatingBusinessMutations,
   }));
 
   assert.ok(animating.length >= 7, `有效动画帧过少: ${JSON.stringify(audit.frames)}`);
@@ -366,7 +403,11 @@ function assertTurnAudit(audit, { expectTemporaryCopy }) {
   assert.ok(audit.frames.every((frame) => frame.temporaryCopyCount <= 1));
   assert.equal(audit.temporaryCopiesAfter, 0);
   assert.equal(audit.dataDateChanges, 0);
-  assert.equal(audit.nonAdjacentBusinessMutations, 0);
+  assert.equal(audit.nonAdjacentAnimatingBusinessMutations, 0);
+  assert.ok(
+    audit.nonAdjacentBusinessMutations <= 16,
+    `邻页水合产生了过多 DOM 变更: ${audit.nonAdjacentBusinessMutations}`,
+  );
 
   assert.ok(audit.totalMs <= 900, `翻页总时长过高: ${audit.totalMs.toFixed(1)}ms`);
   assert.ok(maxLongTask <= 150, `单个 long task 过高: ${maxLongTask.toFixed(1)}ms`);
@@ -405,7 +446,18 @@ async function clickDayAndWait(name) {
   await page.locator(".day-flipbook--turning").waitFor({ state: "hidden", timeout: 4_000 });
 }
 
-async function assertSettledTurn(expectedDate) {
+async function assertSettledTurn(expectedDate, { waitForHydration = true } = {}) {
+  if (waitForHydration) {
+    await page.waitForFunction(
+      (date) => {
+        const root = document.querySelector(".day-flipbook");
+        return root?.dataset.hydrationAnchorDate === date
+          && root?.dataset.hydrationRadius === "1";
+      },
+      expectedDate,
+      { timeout: 1_500 },
+    );
+  }
   const state = await page.locator(".day-flipbook").evaluate((root) => {
     const engine = root.querySelector('[data-flipbook-engine="stpageflip"]');
     const visibleItems = [...(engine?.querySelectorAll(".stf__item") ?? [])]
@@ -432,6 +484,8 @@ async function assertSettledTurn(expectedDate) {
         return getComputedStyle(element).display !== "none"
           && Boolean(style.width || style.transform || style.clipPath);
       }).length,
+      hydratedDates: [...(engine?.querySelectorAll(".day-page") ?? [])]
+        .map((element) => element.dataset.pageDate),
     };
   });
   assert.equal(state.phase, "idle");
@@ -442,11 +496,18 @@ async function assertSettledTurn(expectedDate) {
   assert.equal(state.transformedPages, 0);
   assert.deepEqual(state.visibleDates, [expectedDate]);
   assert.equal(state.visibleShadows, 0);
+  if (waitForHydration) {
+    assert.deepEqual(state.hydratedDates, expectedHydratedDates(expectedDate));
+  } else {
+    assert.ok(state.hydratedDates.includes(expectedDate));
+    assert.ok(state.hydratedDates.length >= 1 && state.hydratedDates.length <= 3);
+  }
   assert.equal(new URL(page.url()).pathname, `/day/${expectedDate}`);
 }
 
 try {
   await openSettings();
+  await assertNoHydratedDayPages();
   assert.equal(await page.getByRole("heading", { name: "翻页效果" }).count(), 0);
   assert.equal(await page.getByRole("radio", { name: "原有翻页" }).count(), 0);
   assert.equal(await page.getByRole("radio", { name: "3D 翻书" }).count(), 0);
@@ -497,10 +558,12 @@ try {
   await page.waitForTimeout(1_200);
   assert.equal(new URL(page.url()).pathname, "/settings");
   assert.equal(await root.getAttribute("aria-busy"), "false");
+  await assertNoHydratedDayPages();
   await page.getByRole("button", { name: "返回" }).click();
   await engine.waitFor({ state: "visible" });
   await assertDate("30");
   await assertFullBook("2026-07-30");
+  await assertSingleAccessibleDayPage("2026-07-30");
   await assertEngineIdentity();
 
   for (const width of [360, 390, 430]) await assertNoHorizontalOverflow(width);
@@ -516,7 +579,7 @@ try {
   const continuousForwardDates = campaignDates.slice(july31Index + 1, july31Index + 21);
   for (const date of continuousForwardDates) {
     await clickDayAndWait("后一天");
-    await assertSettledTurn(date);
+    await assertSettledTurn(date, { waitForHydration: false });
   }
   const continuousBackwardDates = [
     ...continuousForwardDates.slice(0, -1).reverse(),
@@ -524,8 +587,9 @@ try {
   ];
   for (const date of continuousBackwardDates) {
     await clickDayAndWait("前一天");
-    await assertSettledTurn(date);
+    await assertSettledTurn(date, { waitForHydration: false });
   }
+  await assertSettledTurn("2026-07-31");
   await assertFullBook("2026-07-31");
   await assertEngineIdentity();
   assert.equal(await page.locator('[data-temporary-copy="true"]').count(), 0);
@@ -616,7 +680,7 @@ try {
 
   assert.deepEqual(errors, []);
   console.log(
-    `flipbook QA passed: 48 stable Day pages; forward=${JSON.stringify(forwardMetrics)}; backward=${JSON.stringify(backwardMetrics)}`,
+    `flipbook QA passed: 48 stable page shells; at most 3 hydrated Day pages; forward=${JSON.stringify(forwardMetrics)}; backward=${JSON.stringify(backwardMetrics)}`,
   );
 } catch (error) {
   if (errors.length) console.error(`browser diagnostics:\n${errors.join("\n")}`);

@@ -2,6 +2,7 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 
 import {
+  createDayFlipbookHydrationPositions,
   createDayFlipbookPages,
   findDayFlipbookPosition,
 } from "../lib/dayPageTransition.js";
@@ -39,6 +40,14 @@ const engineReady = ref(false);
 const engineUnavailable = ref(false);
 const engineInstanceId = ref(0);
 const pageEntries = computed(() => createDayFlipbookPages(props.dates));
+const hydrationAnchorDate = ref(props.selectedDate);
+const hydrationRadius = ref(0);
+const hydratedPositions = computed(() => new Set(
+  createDayFlipbookHydrationPositions(props.dates, hydrationAnchorDate.value, {
+    active: props.active && !engineUnavailable.value,
+    radius: hydrationRadius.value,
+  }),
+));
 
 let pageFlip = null;
 let pageFlipModulePromise = null;
@@ -48,6 +57,8 @@ let fallbackTimer;
 let pendingSettleFrame;
 let resizeObserver;
 let resizeTimer;
+let hydrationIdleHandle;
+let hydrationIdleFallback = false;
 let lastWidth = 0;
 let lastHeight = 0;
 let layoutDirty = false;
@@ -55,6 +66,7 @@ let destroyed = false;
 let internalCommitDate = null;
 let transitionEpoch = 0;
 let requestEngineFrames = () => {};
+let setEngineRenderingActive = () => {};
 
 let swipeActive = false;
 let swipeStartX = 0;
@@ -64,6 +76,42 @@ let suppressClickUntil = 0;
 
 function positionForDate(date) {
   return findDayFlipbookPosition(props.dates, date);
+}
+
+function cancelHydrationRecenter() {
+  if (hydrationIdleHandle === undefined) return;
+  if (hydrationIdleFallback) globalThis.clearTimeout?.(hydrationIdleHandle);
+  else globalThis.cancelIdleCallback?.(hydrationIdleHandle);
+  hydrationIdleHandle = undefined;
+  hydrationIdleFallback = false;
+}
+
+function scheduleHydrationRecenter(date) {
+  cancelHydrationRecenter();
+  if (
+    !props.active
+    || destroyed
+    || (hydrationAnchorDate.value === date && hydrationRadius.value === 1)
+  ) return;
+
+  const recenter = () => {
+    hydrationIdleHandle = undefined;
+    hydrationIdleFallback = false;
+    if (!props.active || destroyed) return;
+    if (busy.value) {
+      scheduleHydrationRecenter(date);
+      return;
+    }
+    hydrationAnchorDate.value = date;
+    hydrationRadius.value = 1;
+  };
+
+  if (typeof globalThis.requestIdleCallback === "function") {
+    hydrationIdleHandle = globalThis.requestIdleCallback(recenter, { timeout: 500 });
+    return;
+  }
+  hydrationIdleFallback = true;
+  hydrationIdleHandle = globalThis.setTimeout?.(recenter, 32);
 }
 
 function setBusy(value) {
@@ -166,6 +214,10 @@ function installRenderGuards(engine) {
   const originalDrawFrame = render?.drawFrame;
   if (!render || typeof originalDrawFrame !== "function") return;
 
+  let renderingActive = props.active;
+  let remainingFrames = 3;
+  let wasAnimating = false;
+
   if (typeof originalClear === "function") {
     render.clear = function optimizedClear() {
       const pages = engine.getPageCollection?.().getPages?.();
@@ -188,9 +240,8 @@ function installRenderGuards(engine) {
     };
   }
 
-  let remainingFrames = 3;
-  let wasAnimating = false;
   render.drawFrame = function guardedDrawFrame(...args) {
+    if (!renderingActive) return undefined;
     const isAnimating = engine.getState?.() !== "read";
     if (isAnimating) {
       wasAnimating = true;
@@ -207,6 +258,11 @@ function installRenderGuards(engine) {
 
   requestEngineFrames = (count = 2) => {
     remainingFrames = Math.max(remainingFrames, count);
+  };
+  setEngineRenderingActive = (active) => {
+    renderingActive = active;
+    if (active) requestEngineFrames(3);
+    else remainingFrames = 0;
   };
 }
 
@@ -367,6 +423,13 @@ function finishEngineAnimation() {
   }
 }
 
+function clearEngineArtifacts() {
+  if (!pageFlip) return;
+  const pages = pageFlip.getPageCollection?.().getPages?.() ?? [];
+  for (const page of pages) page.hideTemporaryCopy?.();
+  pageFlip.getRender?.().clearShadow?.();
+}
+
 function alignEngineToDate(date, { update = false } = {}) {
   if (!pageFlip) return false;
   const position = positionForDate(date);
@@ -487,6 +550,14 @@ async function turn(direction, targetDate, commitNavigation) {
   const token = ++transitionEpoch;
   setBusy(true);
   try {
+    const targetPosition = positionForDate(targetDate);
+    if (!hydratedPositions.value.has(targetPosition)) {
+      cancelHydrationRecenter();
+      hydrationAnchorDate.value = props.selectedDate;
+      hydrationRadius.value = 1;
+      await nextTick();
+    }
+
     if (prefersReducedMotion()) {
       return await commitWithoutAnimation(targetDate, commitNavigation, token);
     }
@@ -519,7 +590,6 @@ async function turn(direction, targetDate, commitNavigation) {
     }
 
     const sourcePosition = positionForDate(props.selectedDate);
-    const targetPosition = positionForDate(targetDate);
     const expectedTarget = sourcePosition + (direction === "previous" ? -1 : 1);
     if (sourcePosition < 0 || targetPosition !== expectedTarget) {
       throw new RangeError(`target date is not adjacent to the current page: ${targetDate}`);
@@ -678,10 +748,18 @@ function refreshEngineLayout() {
 watch(
   () => props.selectedDate,
   (date) => {
-    if (internalCommitDate === date) return;
+    if (internalCommitDate === date) {
+      scheduleHydrationRecenter(date);
+      return;
+    }
+    cancelHydrationRecenter();
+    hydrationAnchorDate.value = date;
+    hydrationRadius.value = 0;
     const token = cancelPendingTurn();
     void nextTick().then(() => {
-      if (token === transitionEpoch) alignEngineToDate(date);
+      if (token !== transitionEpoch) return;
+      alignEngineToDate(date);
+      scheduleHydrationRecenter(date);
     });
   },
 );
@@ -690,14 +768,25 @@ watch(
   () => props.active,
   (active) => {
     if (!active) {
+      cancelHydrationRecenter();
+      hydrationRadius.value = 0;
+      const focused = document.activeElement;
+      if (focused instanceof HTMLElement && host.value?.contains(focused)) focused.blur();
       if (busy.value || phase.value !== "idle") cancelPendingTurn();
+      clearEngineArtifacts();
+      setEngineRenderingActive(false);
       return;
     }
+    hydrationAnchorDate.value = props.selectedDate;
+    hydrationRadius.value = 0;
+    setEngineRenderingActive(true);
     void nextTick().then(async () => {
       const engine = await ensureEngine();
       if (!engine) return;
+      setEngineRenderingActive(true);
       await nextTick();
       alignEngineToDate(props.selectedDate, { update: true });
+      scheduleHydrationRecenter(props.selectedDate);
     });
   },
 );
@@ -708,13 +797,18 @@ onMounted(() => {
   window.addEventListener("touchcancel", endSwipe);
   resizeObserver = new ResizeObserver(refreshEngineLayout);
   if (host.value) resizeObserver.observe(host.value);
-  if (props.active) void ensureEngine();
+  if (props.active) {
+    void ensureEngine().then((engine) => {
+      if (engine) scheduleHydrationRecenter(props.selectedDate);
+    });
+  }
 });
 
 onBeforeUnmount(() => {
   destroyed = true;
   clearFallbackTimer();
   clearPendingSettleFrame();
+  cancelHydrationRecenter();
   globalThis.clearTimeout?.(resizeTimer);
   resizeObserver?.disconnect();
   window.removeEventListener("pointerup", endSwipe);
@@ -742,6 +836,7 @@ onBeforeUnmount(() => {
   }
   pageFlip = null;
   requestEngineFrames = () => {};
+  setEngineRenderingActive = () => {};
   setBusy(false);
 });
 
@@ -760,6 +855,9 @@ defineExpose({
     data-page-transition="flipbook"
     :data-flipbook-phase="phase"
     :data-engine-instance="engineInstanceId || undefined"
+    :data-hydrated-page-count="hydratedPositions.size"
+    :data-hydration-anchor-date="hydrationAnchorDate"
+    :data-hydration-radius="hydrationRadius"
     :aria-busy="busy"
     @click.capture="handleClickCapture"
     @pointerdown="handlePointerDown"
@@ -767,7 +865,7 @@ defineExpose({
     @touchstart.passive="handleTouchStart"
     @touchmove.passive="handleTouchMove"
   >
-    <div v-if="engineUnavailable" class="day-flipbook__fallback">
+    <div v-if="engineUnavailable && active" class="day-flipbook__fallback">
       <slot :date="selectedDate" :active="active" />
     </div>
 
@@ -793,7 +891,7 @@ defineExpose({
         :inert="!active || entry.date !== selectedDate || undefined"
       >
         <slot
-          v-if="!engineUnavailable"
+          v-if="!engineUnavailable && hydratedPositions.has(entry.position)"
           :date="entry.date"
           :active="active && entry.date === selectedDate"
         />
@@ -849,11 +947,6 @@ defineExpose({
 
 .day-flipbook-page[aria-hidden="true"] {
   pointer-events: none;
-}
-
-.day-flipbook-page[aria-hidden="true"] :deep(*) {
-  animation: none !important;
-  transition: none !important;
 }
 
 .day-flipbook-page :deep(.day-page) {
