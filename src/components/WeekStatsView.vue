@@ -22,6 +22,10 @@ const props = defineProps({
     type: Number,
     default: 1,
   },
+  showReturnAction: {
+    type: Boolean,
+    default: false,
+  },
 });
 
 const emit = defineEmits(["back"]);
@@ -76,6 +80,17 @@ const subjectMax = computed(() =>
       </v-chip>
     </v-toolbar>
 
+    <div v-if="showReturnAction" class="stats-return-wrap">
+      <v-btn
+        size="small"
+        variant="text"
+        append-icon="mdi-calendar-today-outline"
+        @click="emit('back')"
+      >
+        返回日视图
+      </v-btn>
+    </div>
+
     <v-fade-transition appear>
       <div>
         <v-card class="completion-card mt-3" variant="outlined" elevation="0">
@@ -90,11 +105,14 @@ const subjectMax = computed(() =>
           </v-card-item>
           <v-card-text class="pt-0">
             <v-progress-linear
+              class="completion-progress"
               :model-value="completionRate"
               color="primary"
-              bg-color="surface-variant"
-              height="6"
+              bg-color="outline"
+              :bg-opacity="0.2"
+              height="10"
               rounded
+              :aria-label="`本周完成率 ${completionRate}%`"
             />
             <div class="d-flex justify-space-between mt-2 text-caption text-medium-emphasis">
               <span>完成 {{ numberValue("completedCount") }} 项</span>
@@ -103,7 +121,7 @@ const subjectMax = computed(() =>
           </v-card-text>
         </v-card>
 
-        <v-row dense class="mt-2">
+        <v-row density="comfortable" class="mt-2">
           <v-col cols="6">
             <v-card class="metric-card" variant="outlined" elevation="0">
               <v-card-text>
@@ -195,11 +213,16 @@ const subjectMax = computed(() =>
   padding: 12px 14px 28px;
 }
 
+.stats-return-wrap {
+  display: flex;
+  justify-content: flex-end;
+}
+
 .view-title,
 .section-title,
 .metric-value,
 .completion-number {
-  font-family: "Noto Serif SC", "Songti SC", STSong, serif;
+  font-family: var(--app-font-family);
 }
 
 .view-title,
@@ -210,6 +233,11 @@ const subjectMax = computed(() =>
 .completion-card,
 .metric-card {
   background-color: rgba(var(--v-theme-surface), 0.58);
+}
+
+:global(.v-theme--poeticNight) .completion-card,
+:global(.v-theme--poeticNight) .metric-card {
+  background-color: rgba(var(--v-theme-surface), 0.92);
 }
 
 .completion-number {
@@ -234,6 +262,10 @@ const subjectMax = computed(() =>
   color: rgba(var(--v-theme-on-surface), 0.66);
   font-size: 0.72rem;
   letter-spacing: 0.08em;
+}
+
+:global(.v-theme--poeticNight) .metric-label {
+  color: rgba(var(--v-theme-on-surface), 0.74);
 }
 
 @media (max-width: 360px) {

@@ -57,7 +57,7 @@ function onPaste(event) {
           :icon="statusIcon(item)"
           :color="item.status === 'missed' ? 'warning' : item.isExempt ? 'secondary' : 'primary'"
           variant="text"
-          size="56"
+          :size="66"
           rounded="circle"
           :aria-label="`切换第 ${index + 1} 项状态`"
           @click="emit('cycle', item.id)"
@@ -84,7 +84,7 @@ function onPaste(event) {
     </v-fade-transition>
 
     <div class="saturday-row saturday-row--draft">
-      <v-icon class="saturday-status-placeholder" icon="mdi-circle-outline" size="32" />
+      <v-icon class="saturday-status-placeholder" icon="mdi-circle-outline" :size="40.5" />
       <span class="saturday-index">{{ items.length + 1 }}.</span>
       <v-text-field
         ref="draftField"
@@ -112,12 +112,31 @@ function onPaste(event) {
 
 <style scoped>
 .saturday-view {
-  font-size: 1.5rem;
+  /*
+   * 工作日实际基准：正文 1rem / 4.4vw / 1.12rem、状态按钮 44px、
+   * compact 行高 56px（手机正文另为 .98rem）。
+   * 周六的任务视觉统一乘以 1.5；集中为变量，避免各断点分别近似取值。
+   */
+  --saturday-task-scale: 1.5;
+  --saturday-task-font-min: calc(1rem * var(--saturday-task-scale));
+  --saturday-task-font-fluid: calc(4.4vw * var(--saturday-task-scale));
+  --saturday-task-font-max: calc(1.12rem * var(--saturday-task-scale));
+  --saturday-status-size: calc(44px * var(--saturday-task-scale));
+  --saturday-status-icon-size: calc(27px * var(--saturday-task-scale));
+  --saturday-row-min-height: calc(56px * var(--saturday-task-scale));
+  --saturday-alert-inset-x: calc(8px * var(--saturday-task-scale));
+  --saturday-alert-inset-y: calc(6px * var(--saturday-task-scale));
+
+  font-size: clamp(
+    var(--saturday-task-font-min),
+    var(--saturday-task-font-fluid),
+    var(--saturday-task-font-max)
+  );
 }
 
 .saturday-title {
   color: rgb(var(--v-theme-on-background));
-  font-family: "LXGW WenKai", "STKaiti", "KaiTi", serif;
+  font-family: var(--app-font-family);
   font-size: clamp(30px, 8vw, 36px);
   font-weight: 400;
   letter-spacing: 0.16em;
@@ -128,25 +147,39 @@ function onPaste(event) {
 .saturday-row {
   align-items: center;
   display: grid;
-  grid-template-columns: 56px 34px minmax(0, 1fr) 44px;
-  min-height: 92px;
+  grid-template-columns: var(--saturday-status-size) 2.55rem minmax(0, 1fr) 44px;
+  min-height: var(--saturday-row-min-height);
   padding: 0 2px;
   position: relative;
 }
 
 .saturday-row--missed::before {
-  background: url("/assets/brush-alert.png") center / 100% 80% no-repeat;
+  background-image: url("/assets/brush-alert.png");
+  background-position: center;
+  background-repeat: no-repeat;
+  background-size:
+    calc(100% - var(--saturday-alert-inset-x))
+    calc(100% - var(--saturday-alert-inset-y));
   content: "";
-  inset: 4px 0;
+  inset: 0;
   opacity: 0.58;
   pointer-events: none;
   position: absolute;
+}
+
+:global(.v-theme--poeticNight) .saturday-row--missed::before {
+  background-image: url("/assets/brush-alert-dark.png");
 }
 
 .saturday-row--completed .saturday-input,
 .saturday-row--completed .saturday-index {
   opacity: 0.42;
   text-decoration: line-through;
+}
+
+:global(.v-theme--poeticNight) .saturday-row--completed .saturday-input,
+:global(.v-theme--poeticNight) .saturday-row--completed .saturday-index {
+  opacity: 0.52;
 }
 
 .saturday-row--exempt .saturday-input,
@@ -171,18 +204,51 @@ function onPaste(event) {
   z-index: 1;
 }
 
+.saturday-status {
+  width: var(--saturday-status-size) !important;
+  height: var(--saturday-status-size) !important;
+  min-width: var(--saturday-status-size) !important;
+}
+
+.saturday-status :deep(.v-icon) {
+  font-size: var(--saturday-status-icon-size) !important;
+}
+
 .saturday-status-placeholder {
   justify-self: center;
 }
 
 .saturday-index {
-  font-family: "Noto Serif SC", "Songti SC", serif;
-  font-size: 22px;
+  font-family: var(--app-font-family);
+  font-size: clamp(
+    var(--saturday-task-font-min),
+    var(--saturday-task-font-fluid),
+    var(--saturday-task-font-max)
+  );
+  line-height: 1.65;
+}
+
+.saturday-input {
+  min-width: 0;
+}
+
+.saturday-input :deep(.v-input__control),
+.saturday-input :deep(.v-field) {
+  min-width: 0;
+}
+
+.saturday-input :deep(.v-field) {
+  --v-input-control-height: calc(44px * var(--saturday-task-scale));
 }
 
 .saturday-input :deep(input) {
-  font-family: "LXGW WenKai", "STKaiti", "KaiTi", serif;
-  font-size: 23px;
+  font-family: var(--app-font-family);
+  font-size: clamp(
+    var(--saturday-task-font-min),
+    var(--saturday-task-font-fluid),
+    var(--saturday-task-font-max)
+  );
+  line-height: 1.65;
   letter-spacing: 0.03em;
 }
 
@@ -198,12 +264,16 @@ function onPaste(event) {
 }
 
 @media (max-width: 360px) {
-  .saturday-row {
-    grid-template-columns: 48px 28px minmax(0, 1fr) 40px;
+  .saturday-view {
+    --saturday-task-font-min: calc(0.98rem * var(--saturday-task-scale));
+    --saturday-task-font-fluid: calc(0.98rem * var(--saturday-task-scale));
+    --saturday-task-font-max: calc(0.98rem * var(--saturday-task-scale));
+
+    padding-inline: 8px !important;
   }
 
-  .saturday-input :deep(input) {
-    font-size: 21px;
+  .saturday-row {
+    grid-template-columns: var(--saturday-status-size) 1.8rem minmax(0, 1fr) 44px;
   }
 }
 </style>

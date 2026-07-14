@@ -49,9 +49,6 @@ const formatLikedAt = (value) => {
       <v-toolbar-title id="favorites-title" class="view-title">
         赠语收藏
       </v-toolbar-title>
-      <v-chip size="small" color="primary" variant="outlined">
-        {{ sortedFavorites.length }} 句
-      </v-chip>
     </v-toolbar>
 
     <p class="view-caption px-4 mt-3 mb-4">
@@ -138,7 +135,7 @@ const formatLikedAt = (value) => {
 .quote-date,
 .quote-text,
 .quote-index {
-  font-family: "Noto Serif SC", "Songti SC", STSong, serif;
+  font-family: var(--app-font-family);
 }
 
 .view-title {
@@ -147,7 +144,7 @@ const formatLikedAt = (value) => {
 
 .view-caption {
   color: rgba(var(--v-theme-on-surface), 0.58);
-  font-family: "Noto Serif SC", "Songti SC", STSong, serif;
+  font-family: var(--app-font-family);
   font-size: 0.76rem;
   line-height: 1.85;
 }
@@ -158,6 +155,14 @@ const formatLikedAt = (value) => {
 
 .quote-card {
   background-color: rgba(var(--v-theme-surface), 0.52);
+}
+
+:global(.v-theme--poeticNight) .quote-card {
+  background-color: rgba(var(--v-theme-surface), 0.92);
+}
+
+:global(.v-theme--poeticNight) .view-caption {
+  color: rgba(var(--v-theme-on-surface), 0.72);
 }
 
 .quote-index {

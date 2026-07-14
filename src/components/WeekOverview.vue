@@ -43,6 +43,7 @@ const onTouchEnd = (event) => {
 };
 
 const rateFor = (row) => {
+  if (row.rewardComplete) return 100;
   const total = Number(row.total ?? 0);
   if (!total) return 0;
   return Math.min(100, Math.round((Number(row.completed ?? 0) / total) * 100));
@@ -66,6 +67,7 @@ const kindText = (kind) => {
 };
 
 const rowIcon = (row) => {
+  if (row.rewardComplete) return "mdi-gift-outline";
   if (Number(row.total ?? 0) && Number(row.completed ?? 0) >= Number(row.total)) {
     return "mdi-check";
   }
@@ -143,7 +145,7 @@ const rowIcon = (row) => {
                   :variant="row.isSelected ? 'flat' : 'outlined'"
                   :color="row.isSelected ? 'surface' : 'primary'"
                 >
-                  {{ Number(row.completed ?? 0) }}/{{ Number(row.total ?? 0) }}
+                  {{ row.rewardComplete && !Number(row.total ?? 0) ? "奖励满格" : `${Number(row.completed ?? 0)}/${Number(row.total ?? 0)}` }}
                 </v-chip>
               </template>
             </v-card-item>
@@ -183,7 +185,7 @@ const rowIcon = (row) => {
 .view-title,
 .day-title,
 .date-number {
-  font-family: "Noto Serif SC", "Songti SC", STSong, serif;
+  font-family: var(--app-font-family);
 }
 
 .view-title {
@@ -192,7 +194,7 @@ const rowIcon = (row) => {
 
 .view-caption {
   color: rgba(var(--v-theme-on-surface), 0.58);
-  font-family: "Noto Serif SC", "Songti SC", STSong, serif;
+  font-family: var(--app-font-family);
   font-size: 0.76rem;
   line-height: 1.8;
 }
@@ -208,6 +210,14 @@ const rowIcon = (row) => {
 
 .day-card--selected {
   background-color: rgba(var(--v-theme-primary), 0.08);
+}
+
+:global(.v-theme--poeticNight) .day-card:not(.day-card--selected) {
+  background-color: rgba(var(--v-theme-surface), 0.92);
+}
+
+:global(.v-theme--poeticNight) .view-caption {
+  color: rgba(var(--v-theme-on-surface), 0.72);
 }
 
 .date-number {

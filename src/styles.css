@@ -6,12 +6,34 @@
   src: url("./assets/fonts/lxgw-wenkai-300.woff2") format("woff2");
 }
 
+@font-face {
+  font-family: "Anthropic";
+  font-style: normal;
+  font-display: swap;
+  font-weight: 100 900;
+  src: url("https://assets-proxy.anthropic.com/claude-ai/v2/assets/v1/c66fc489e-2VcCjn5t.woff2") format("woff2");
+}
+
 :root {
-  color: #312432;
-  background: #efeeec;
-  font-family: "Noto Serif SC", "Source Han Serif SC", "Songti SC", serif;
+  --app-font-family: "LXGW WenKai", "STKaiti", "KaiTi", serif;
+  color: #ede5e9;
+  background: #1c181b;
+  color-scheme: dark;
+  font-family: var(--app-font-family);
   font-synthesis: none;
   text-rendering: optimizeLegibility;
+}
+
+:root[data-font="lxgw-wenka"] {
+  --app-font-family: "LXGW WenKai", "STKaiti", "KaiTi", serif;
+}
+
+:root[data-font="system"] {
+  --app-font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+:root[data-font="anthropic"] {
+  --app-font-family: "Anthropic", system-ui, sans-serif;
 }
 
 * {
@@ -26,20 +48,38 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
-#app,
-.v-application {
+#app {
+  width: 100vw;
   height: 100dvh;
-  background: #efeeec !important;
+  background: #1c181b;
+  font-family: var(--app-font-family);
+}
+
+.v-application {
+  width: 100vw;
+  height: 100dvh;
+  background: rgb(var(--v-theme-background)) !important;
+  font-family: var(--app-font-family);
+}
+
+.v-theme--poeticPaper {
+  color-scheme: light;
+}
+
+.v-theme--poeticNight {
+  color-scheme: dark;
 }
 
 .mobile-prototype {
-  width: min(100vw, 390px);
-  height: min(100dvh, 844px);
-  margin-inline: auto;
+  width: 100vw;
+  height: 100dvh;
+  margin: 0;
   overflow: hidden;
   position: relative;
+  border: 0;
+  border-radius: 0;
   background: rgb(var(--v-theme-background));
-  box-shadow: 0 0 0 1px rgba(132, 124, 127, 0.12);
+  box-shadow: none;
   isolation: isolate;
 }
 
@@ -51,13 +91,17 @@ body {
   background-size: 100% 100%;
 }
 
+.v-theme--poeticNight .paper-surface {
+  background-image: url("/assets/study-wash-bg-dark.png");
+}
+
 .paper-scroll {
   height: 100%;
   max-width: 100%;
   overflow-x: hidden;
   overflow-y: auto;
   overscroll-behavior-y: contain;
-  scrollbar-color: rgba(116, 98, 107, 0.26) transparent;
+  scrollbar-color: rgba(var(--v-theme-outline), 0.32) transparent;
   scrollbar-width: thin;
   -webkit-overflow-scrolling: touch;
 }
@@ -67,7 +111,7 @@ body {
 }
 
 .paper-scroll::-webkit-scrollbar-thumb {
-  background: rgba(116, 98, 107, 0.26);
+  background: rgba(var(--v-theme-outline), 0.32);
 }
 
 .page-next-enter-active,
@@ -124,21 +168,6 @@ body {
   position: absolute;
 }
 
-@media (min-height: 845px) {
-  #app,
-  .v-application {
-    display: grid;
-    place-items: center;
-  }
-}
-
-@media (max-width: 390px) {
-  .mobile-prototype {
-    border: 0;
-    box-shadow: none;
-  }
-}
-
 @media (min-width: 960px) {
   #app,
   .v-application {
@@ -192,18 +221,7 @@ body {
   }
 
   .mobile-prototype--desktop .raffle-content {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    align-items: start;
-    max-width: 880px;
-    padding: 32px 40px 48px;
-  }
-
-  .mobile-prototype--desktop .raffle-content > section:first-child {
-    grid-row: span 2;
-  }
-
-  .mobile-prototype--desktop .raffle-stage {
-    min-height: 460px;
+    max-width: 960px;
   }
 }
 

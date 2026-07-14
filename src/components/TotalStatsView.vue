@@ -119,7 +119,7 @@ const luckProgress = computed(() =>
           </v-card-text>
         </v-card>
 
-        <v-row dense class="mt-2">
+        <v-row density="comfortable" class="mt-2">
           <v-col cols="6">
             <v-card class="metric-card" variant="outlined" elevation="0">
               <v-card-text>
@@ -328,7 +328,7 @@ const luckProgress = computed(() =>
 .section-title,
 .metric-value,
 .completion-number {
-  font-family: "Noto Serif SC", "Songti SC", STSong, serif;
+  font-family: var(--app-font-family);
 }
 
 .view-title,
@@ -339,6 +339,11 @@ const luckProgress = computed(() =>
 .summary-card,
 .metric-card {
   background-color: rgba(var(--v-theme-surface), 0.58);
+}
+
+:global(.v-theme--poeticNight) .summary-card,
+:global(.v-theme--poeticNight) .metric-card {
+  background-color: rgba(var(--v-theme-surface), 0.92);
 }
 
 .completion-number {
@@ -368,6 +373,11 @@ const luckProgress = computed(() =>
   color: rgba(var(--v-theme-on-surface), 0.6);
   font-size: 0.68rem;
   line-height: 1.6;
+}
+
+:global(.v-theme--poeticNight) .metric-detail,
+:global(.v-theme--poeticNight) .index-note {
+  color: rgba(var(--v-theme-on-surface), 0.72);
 }
 
 .metric-detail {

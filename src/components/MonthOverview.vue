@@ -85,6 +85,7 @@ const isAllowedDate = (value) => allowedDateSet.value.has(toIsoDate(value));
 const eventColor = (value) => {
   const day = dayMap.value.get(toIsoDate(value));
   if (!day?.inRange) return false;
+  if (day.rewardComplete) return "primary";
   const total = Number(day.total ?? 0);
   if (!total) return "outline";
   return Number(day.completed ?? 0) >= total ? "primary" : "error";
@@ -163,8 +164,8 @@ watch(
       <v-btn
         icon="mdi-calendar-week-outline"
         variant="text"
-        aria-label="切换视图层级"
-        title="双指反向展开，或点击切换视图"
+        aria-label="返回当前周视图"
+        title="双指反向展开，或点击返回当前周"
         @click="emit('pinch-out')"
       />
     </v-toolbar>
@@ -252,13 +253,18 @@ watch(
                 icon="mdi-arrow-right"
                 variant="text"
                 color="primary"
-                aria-label="进入所选日期"
+                aria-label="查看所选日期所在周"
                 @click="emit('select', selectedDay.date)"
               />
             </template>
           </v-card-item>
           <v-card-text class="pt-0">
-            当日完成 {{ Number(selectedDay.completed ?? 0) }} / {{ Number(selectedDay.total ?? 0) }} 项
+            <template v-if="selectedDay.rewardComplete && !Number(selectedDay.total ?? 0)">
+              奖励已兑现 · 当日状态满格 · 点击日期先查看所在周
+            </template>
+            <template v-else>
+              当日完成 {{ Number(selectedDay.completed ?? 0) }} / {{ Number(selectedDay.total ?? 0) }} 项 · 点击日期先查看所在周
+            </template>
           </v-card-text>
         </v-card>
       </div>
@@ -279,7 +285,7 @@ watch(
 .view-title,
 .section-title,
 .selected-number {
-  font-family: "Noto Serif SC", "Songti SC", STSong, serif;
+  font-family: var(--app-font-family);
 }
 
 .view-title,
@@ -290,6 +296,11 @@ watch(
 .month-progress,
 .selected-day {
   background-color: rgba(var(--v-theme-surface), 0.5);
+}
+
+:global(.v-theme--poeticNight) .month-progress,
+:global(.v-theme--poeticNight) .selected-day {
+  background-color: rgba(var(--v-theme-surface), 0.92);
 }
 
 .paper-calendar {
@@ -306,7 +317,7 @@ watch(
 }
 
 :deep(.v-date-picker-month__day-btn) {
-  font-family: "Noto Serif SC", "Songti SC", STSong, serif;
+  font-family: var(--app-font-family);
 }
 
 @media (max-width: 360px) {
