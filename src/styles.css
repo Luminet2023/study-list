@@ -85,14 +85,6 @@ body {
 
 .paper-surface {
   background-color: rgb(var(--v-theme-background));
-  background-image: url("/assets/study-wash-bg.png");
-  background-position: center top;
-  background-repeat: no-repeat;
-  background-size: 100% 100%;
-}
-
-.v-theme--poeticNight .paper-surface {
-  background-image: url("/assets/study-wash-bg-dark.png");
 }
 
 .paper-scroll {

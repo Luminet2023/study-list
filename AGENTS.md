@@ -8,7 +8,7 @@ When implementing from a selected generated mock, treat that image as the source
 
 ## Locked product direction
 
-- Recreate the selected third concept: warm rice paper, pale watercolor branches, oversized date, centered blessing, and a fine vertical study path.
+- 页面统一使用主题纯色背景，不再使用宣纸、水彩、笔刷或转盘插画背景；保留 oversized date、居中祝语与细线学习路径等排版语言。
 - The app is mobile-first at 390 x 844 and must remain usable at 360 and 430 CSS pixels without horizontal scrolling.
 - Use Vue 3 + Vuetify 3 with the `md3` blueprint. Prefer Vuetify components, including Labs `VStepperVertical`, stable `VSnackbarQueue`, and `VFadeTransition`.
 - Do not use `VSnackbar`; user feedback belongs in the queue component.

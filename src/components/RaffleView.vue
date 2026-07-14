@@ -448,15 +448,7 @@ function confirmPaperClaim() {
   overflow-y: auto;
   color: rgb(var(--v-theme-on-surface));
   background-color: rgb(var(--v-theme-background));
-  background-image: url("/assets/raffle-wash-bg.png");
-  background-position: right center;
-  background-repeat: no-repeat;
-  background-size: auto 100%;
   overscroll-behavior-y: contain;
-}
-
-:global(.v-theme--poeticNight) .raffle-view {
-  background-image: url("/assets/raffle-wash-bg-dark.png");
 }
 
 .raffle-toolbar {

@@ -481,14 +481,7 @@ const saveJournal = (value) => {
 }
 
 :deep(.study-item--missed.v-expansion-panel) {
-  background-image: url("/assets/brush-alert.png");
-  background-repeat: no-repeat;
-  background-position: center;
-  background-size: calc(100% - 8px) calc(100% - 6px);
-}
-
-:global(.v-theme--poeticNight) :deep(.study-item--missed.v-expansion-panel) {
-  background-image: url("/assets/brush-alert-dark.png");
+  background-color: rgba(var(--v-theme-error), 0.05);
 }
 
 :deep(.study-item--missed .study-item__content) {

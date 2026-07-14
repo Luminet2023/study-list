@@ -103,7 +103,7 @@ Post-fix visual evidence:
 - [P2] Snackbar Queue 仅有 `collapsed`，但默认 `totalVisible=1`，不存在可叠放的第二条 toast。
 - [P2] 转盘页沿用通用学习背景，PC 大面积区域显得空白，且缺少转盘页自己的视觉识别。
 - 使用官方组合：`collapsed`、`total-visible=5`、`display-strategy="hold"`。连续触发 3 条消息时自动化断言确认 3 条 active、至少 2 层 collapsed。
-- 以既有宣纸水彩为风格参考，通过 ImageGen 生成独立 `raffle-wash-bg.png`；锦鲤、涟漪与签纸集中在内容安全区之外，PC 与手机分别适配裁切。
+- 后续产品方向已取消页面插画背景；转盘页与通用学习页统一使用主题纯色背景。
 - Post-fix visual evidence:
   - `/home/luminet/coding/zako/study-list/qa/implementation-desktop-snackbar-queue.png`
   - `/home/luminet/coding/zako/study-list/qa/implementation-desktop-raffle.png`

@@ -166,21 +166,15 @@ function onPaste(event) {
 }
 
 .saturday-row--missed::before {
-  background-image: url("/assets/brush-alert.png");
-  background-position: center;
-  background-repeat: no-repeat;
-  background-size:
-    calc(100% - var(--saturday-alert-inset-x))
-    calc(100% - var(--saturday-alert-inset-y));
+  background: rgba(var(--v-theme-error), 0.05);
+  border: 1px solid rgba(var(--v-theme-error), 0.16);
+  border-radius: 8px;
   content: "";
-  inset: 0;
-  opacity: 0.58;
+  inset:
+    var(--saturday-alert-inset-y)
+    var(--saturday-alert-inset-x);
   pointer-events: none;
   position: absolute;
-}
-
-:global(.v-theme--poeticNight) .saturday-row--missed::before {
-  background-image: url("/assets/brush-alert-dark.png");
 }
 
 .saturday-row--completed .saturday-input,
