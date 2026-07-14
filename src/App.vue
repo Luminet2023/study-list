@@ -1,9 +1,19 @@
 <script setup>
-import { computed, defineAsyncComponent, nextTick, onMounted, ref, shallowRef, watch } from "vue";
+import {
+  Transition as VueTransition,
+  computed,
+  defineAsyncComponent,
+  nextTick,
+  onMounted,
+  ref,
+  shallowRef,
+  watch,
+} from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { useDisplay } from "vuetify";
 
 import AdjacentDayEar from "./components/AdjacentDayEar.vue";
+import DayFlipbook from "./components/DayFlipbook.vue";
 import PoeticHeader from "./components/PoeticHeader.vue";
 import {
   CAMPAIGN_END,
@@ -26,6 +36,7 @@ import {
 import { PRIZE_DEFINITIONS } from "./domain/raffle.js";
 import { quoteForDate } from "./data/quotes.js";
 import { fetchUniqueHitokoto } from "./services/hitokoto.js";
+import { DAY_PAGE_TRANSITION } from "./lib/dayPageTransition.js";
 import { resolveRouteSelectedDate } from "./router/routeState.js";
 import {
   initializeCampaignStore,
@@ -61,6 +72,8 @@ const priorView = ref("day");
 const statsReference = ref(null);
 const returnDate = ref(null);
 const pageDirection = ref("page-next");
+const dayFlipbook = ref(null);
+const dayTurnBusy = ref(false);
 const dayScroll = ref(null);
 const snackbarQueue = ref([]);
 const spinning = ref(false);
@@ -161,6 +174,19 @@ const fontFamily = computed(() => {
     ? value
     : "lxgw-wenka";
 });
+const dayPageTransition = computed(() =>
+  store.state.preferences?.dayPageTransition === DAY_PAGE_TRANSITION.FLIPBOOK
+    ? DAY_PAGE_TRANSITION.FLIPBOOK
+    : DAY_PAGE_TRANSITION.CLASSIC,
+);
+const dayTransitionComponent = computed(() =>
+  dayPageTransition.value === DAY_PAGE_TRANSITION.CLASSIC ? VueTransition : "div",
+);
+const dayTransitionBindings = computed(() =>
+  dayPageTransition.value === DAY_PAGE_TRANSITION.CLASSIC
+    ? { name: pageDirection.value, mode: "out-in" }
+    : { class: "day-flipbook-static" },
+);
 const cloudSyncTitle = computed(() => {
   if (!auth.user.value) return "通过 Linux DO 登录";
   if (syncControls.value?.baselineConflict.value) return "同步进度等待确认";
@@ -357,15 +383,27 @@ function enqueue(text, color = "primary", timeout = 2600) {
   snackbarQueue.value.push({ text, color, timeout });
 }
 
-function navigateDate(delta) {
-  const next = campaignDates[selectedIndex.value + delta];
-  if (!next) return;
-  pageDirection.value = delta > 0 ? "page-next" : "page-prev";
+async function commitDateNavigation(next) {
   statsReference.value = null;
   returnDate.value = null;
   store.setSelectedDate(next);
-  void router.push(routeLocation("day", next));
-  nextTick(() => dayScroll.value?.scrollTo?.({ top: 0, behavior: "instant" }));
+  await router.push(routeLocation("day", next));
+  await nextTick();
+  dayScroll.value?.scrollTo?.({ top: 0, behavior: "instant" });
+}
+
+function navigateDate(delta) {
+  const next = campaignDates[selectedIndex.value + delta];
+  if (!next || dayTurnBusy.value) return;
+  pageDirection.value = delta > 0 ? "page-next" : "page-prev";
+  const direction = delta > 0 ? "next" : "previous";
+  const navigation =
+    dayPageTransition.value === DAY_PAGE_TRANSITION.FLIPBOOK && dayFlipbook.value
+      ? dayFlipbook.value.turn(direction, () => commitDateNavigation(next))
+      : commitDateNavigation(next);
+  void Promise.resolve(navigation).catch((error) => {
+    enqueue(error?.message || "翻页未能完成", "error", 3600);
+  });
 }
 
 function advanceFromDay() {
@@ -1192,23 +1230,30 @@ onMounted(async () => {
           <AdjacentDayEar
             side="left"
             :label="earLabel(previousDate)"
-            :disabled="!previousDate"
+            :disabled="dayTurnBusy || !previousDate"
             @navigate="navigateDate(-1)"
           />
           <AdjacentDayEar
             side="right"
             :label="selectedDate === CAMPAIGN_END ? '旅程终章' : earLabel(nextDate)"
             :aria-label="selectedDate === CAMPAIGN_END ? '进入旅程终章' : '后一天'"
+            :disabled="dayTurnBusy"
             @navigate="advanceFromDay"
           />
 
-          <transition :name="pageDirection" mode="out-in">
-            <div
-              :key="selectedDate"
-              ref="dayScroll"
-              v-touch="{ left: advanceFromDay, right: () => navigateDate(-1) }"
-              class="paper-scroll day-page"
-            >
+          <DayFlipbook
+            ref="dayFlipbook"
+            :enabled="dayPageTransition === DAY_PAGE_TRANSITION.FLIPBOOK"
+            @update:busy="dayTurnBusy = $event"
+            @animation-error="enqueue('3D 翻页暂不可用，已完成日期切换', 'error', 4200)"
+          >
+            <component :is="dayTransitionComponent" v-bind="dayTransitionBindings">
+              <div
+                :key="selectedDate"
+                ref="dayScroll"
+                v-touch="{ left: advanceFromDay, right: () => navigateDate(-1) }"
+                class="paper-scroll day-page"
+              >
               <PoeticHeader
                 :meta="dateMeta"
                 :quote="currentQuote?.text"
@@ -1281,8 +1326,9 @@ onMounted(async () => {
                   @back="closeSundayStats"
                 />
               </div>
-            </div>
-          </transition>
+              </div>
+            </component>
+          </DayFlipbook>
         </section>
 
         <section v-else-if="viewMode === 'ending'" key="ending" class="view-stage paper-surface">
@@ -1360,9 +1406,11 @@ onMounted(async () => {
         <section v-else key="settings" class="view-stage paper-surface">
           <SettingsView
             :model-value="fontFamily"
+            :day-page-transition="dayPageTransition"
             :quote-source="quoteSource"
             :hitokoto-categories="hitokotoCategories"
             @update:model-value="store.setFontFamily"
+            @update:day-page-transition="store.setDayPageTransition"
             @update:quote-source="store.setQuoteSource"
             @update:hitokoto-categories="store.setHitokotoCategories"
             @back="navigateView('day')"
@@ -1659,6 +1707,13 @@ onMounted(async () => {
 .day-page {
   padding-bottom: calc(30px + env(safe-area-inset-bottom));
   touch-action: pan-y;
+}
+
+.day-flipbook-static {
+  height: 100%;
+  inset: 0;
+  position: absolute;
+  width: 100%;
 }
 
 .day-body {

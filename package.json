@@ -10,12 +10,14 @@
     "deploy": "npm run build && wrangler deploy",
     "preview": "vite preview",
     "test": "node --test tests/*.test.js",
+    "test:flipbook": "node scripts/flipbook-qa.mjs",
     "test:worker": "vitest run --config vitest.config.js",
     "worker:check": "npm run build && wrangler deploy --dry-run"
   },
   "dependencies": {
     "@fontsource-variable/cormorant-garamond": "^5.2.6",
     "@mdi/font": "7.4.47",
+    "@strata-packages/flipbook": "1.5.2",
     "markdown-it": "^14.3.0",
     "vue": "3.5.25",
     "vue-router": "^4.6.4",
