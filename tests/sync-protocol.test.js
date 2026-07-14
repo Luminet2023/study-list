@@ -146,11 +146,15 @@ test("an untouched database produces no cloud records and deletions restore defa
   assert.equal(stateToRecords(state).size, 0);
 });
 
-test("page navigation state is local-only and does not create a cloud diff", () => {
+test("page navigation and transition settings are local-only and do not create a cloud diff", () => {
   const state = createDefaultState();
-  state.preferences = { selectedDate: "2026-07-13" };
+  state.preferences = {
+    selectedDate: "2026-07-13",
+    dayPageTransition: "classic",
+  };
   const before = stateToRecords(state);
   state.preferences.selectedDate = "2026-07-20";
+  state.preferences.dayPageTransition = "flipbook";
   const after = stateToRecords(state);
   assert.deepEqual(diffRecords(before, after), []);
 });

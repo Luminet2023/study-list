@@ -1,6 +1,20 @@
+import { execFileSync } from "node:child_process";
+
 import { defineConfig } from "vite";
 import vue from "@vitejs/plugin-vue";
 import vuetify from "vite-plugin-vuetify";
+
+import { pwaServiceWorkerPlugin } from "./build/pwaPlugin.mjs";
+
+function resolveCommitHash() {
+  return execFileSync("git", ["rev-parse", "HEAD"], {
+    cwd: new URL(".", import.meta.url),
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "ignore"],
+  }).trim();
+}
+
+const commitHash = resolveCommitHash();
 
 const pageChunks = new Map([
   ["/src/components/FavoritesView.vue", "page-favorites"],
@@ -30,6 +44,9 @@ function manualChunks(id) {
 }
 
 export default defineConfig({
+  define: {
+    __COMMIT_HASH__: JSON.stringify(commitHash),
+  },
   build: {
     rollupOptions: {
       output: {
@@ -55,5 +72,5 @@ export default defineConfig({
       clientFiles: ["./src/main.js", "./src/App.vue", "./src/components/WorkdayView.vue"],
     },
   },
-  plugins: [vue(), vuetify({ autoImport: true })],
+  plugins: [vue(), vuetify({ autoImport: true }), pwaServiceWorkerPlugin()],
 });

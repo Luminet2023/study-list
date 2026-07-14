@@ -6,6 +6,10 @@ const props = defineProps({
     type: String,
     default: "lxgw-wenka",
   },
+  dayPageTransition: {
+    type: String,
+    default: "classic",
+  },
   quoteSource: {
     type: String,
     default: "native",
@@ -18,6 +22,7 @@ const props = defineProps({
 
 const emit = defineEmits([
   "update:modelValue",
+  "update:dayPageTransition",
   "update:quoteSource",
   "update:hitokotoCategories",
   "back",
@@ -56,6 +61,21 @@ const quoteSourceOptions = [
     label: "一言",
     description: "首次打开某日时从一言 API 获取，绑定后本地与云端复用。",
     icon: "mdi-comment-quote-outline",
+  },
+];
+
+const dayPageTransitionOptions = [
+  {
+    value: "classic",
+    label: "原有翻页",
+    description: "使用轻柔的淡入与旋转过渡，响应更快。",
+    icon: "mdi-page-next-outline",
+  },
+  {
+    value: "flipbook",
+    label: "3D 翻书",
+    description: "使用 turn.js 呈现纸张卷曲、阴影与真实翻书层次。",
+    icon: "mdi-book-open-page-variant-outline",
   },
 ];
 
@@ -108,6 +128,44 @@ function toggleCategory(value, checked) {
           <v-card-text>
             <p class="font-preview" :data-preview-font="option.value">{{ option.preview }}</p>
           </v-card-text>
+        </v-card>
+      </v-radio-group>
+
+      <v-divider class="settings-divider" />
+
+      <div class="section-heading">
+        <v-icon icon="mdi-book-open-page-variant-outline" size="20" />
+        <div>
+          <h2>翻页效果</h2>
+          <p>仅影响日视图，切换后会立即保存到当前浏览器。</p>
+        </div>
+      </div>
+
+      <v-radio-group
+        :model-value="dayPageTransition"
+        aria-label="选择日视图翻页效果"
+        hide-details
+        @update:model-value="emit('update:dayPageTransition', $event)"
+      >
+        <v-card
+          v-for="option in dayPageTransitionOptions"
+          :key="option.value"
+          class="transition-option mb-3"
+          :class="{ 'transition-option--active': dayPageTransition === option.value }"
+          :color="dayPageTransition === option.value ? 'primary' : undefined"
+          :variant="dayPageTransition === option.value ? 'tonal' : 'outlined'"
+          @click="emit('update:dayPageTransition', option.value)"
+        >
+          <v-card-item>
+            <template #prepend>
+              <v-radio :value="option.value" :aria-label="option.label" @click.stop />
+            </template>
+            <v-card-title class="d-flex align-center ga-2">
+              <v-icon :icon="option.icon" size="20" />
+              {{ option.label }}
+            </v-card-title>
+            <v-card-subtitle>{{ option.description }}</v-card-subtitle>
+          </v-card-item>
         </v-card>
       </v-radio-group>
 
@@ -237,7 +295,8 @@ function toggleCategory(value, checked) {
   line-height: 1.6;
 }
 
-.font-option {
+.font-option,
+.transition-option {
   background: rgba(var(--v-theme-surface), 0.6);
   cursor: pointer;
   transition: border-color 160ms ease, background-color 160ms ease;
@@ -250,6 +309,10 @@ function toggleCategory(value, checked) {
 }
 
 .source-option--active {
+  border-color: rgb(var(--v-theme-primary));
+}
+
+.transition-option--active {
   border-color: rgb(var(--v-theme-primary));
 }
 

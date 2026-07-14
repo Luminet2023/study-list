@@ -19,3 +19,22 @@ test("state replacement keeps the currently selected UI date", async () => {
   assert.equal(store.mutableState.preferences.selectedDate, "2026-07-30");
   assert.equal(store.mutableState.days["2026-07-30"].journal, "事务返回的新内容");
 });
+
+test("the selected flipbook effect survives cloud state replacement and reset", async () => {
+  const originalWarn = console.warn;
+  console.warn = () => {};
+  const store = useCampaignStore();
+  console.warn = originalWarn;
+
+  store.setDayPageTransition("flipbook");
+  const incoming = JSON.parse(JSON.stringify(store.mutableState));
+  incoming.preferences.dayPageTransition = "classic";
+
+  await store.replaceFromSync(incoming);
+
+  assert.equal(store.mutableState.preferences.dayPageTransition, "flipbook");
+  assert.equal(store.createCleanSyncState().preferences.dayPageTransition, "flipbook");
+
+  store.setDayPageTransition("unsupported");
+  assert.equal(store.mutableState.preferences.dayPageTransition, "classic");
+});
