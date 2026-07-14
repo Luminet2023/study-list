@@ -112,8 +112,27 @@ export function encodeClientFrame(type, protobuf, requestId = createSyncRequestI
   });
 }
 
+export function encodeActivityFrame(active) {
+  if (typeof active !== "boolean") throw new TypeError("sync activity must be a boolean");
+  return serializeFrame({
+    version: SYNC_WEBSOCKET_VERSION,
+    type: "activity",
+    active,
+  });
+}
+
 export function decodeClientFrame(message) {
   const frame = parseJsonFrame(message);
+  if (frame.type === "activity") {
+    if (typeof frame.active !== "boolean") {
+      throw new SyncWebSocketFrameError("invalid sync WebSocket activity state");
+    }
+    return {
+      version: frame.version,
+      type: frame.type,
+      active: frame.active,
+    };
+  }
   if (!REQUEST_TYPES.has(frame.type)) {
     throw new SyncWebSocketFrameError("unsupported sync WebSocket request type");
   }

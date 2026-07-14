@@ -3,6 +3,7 @@ import {
   SYNC_WEBSOCKET_PROTOCOL,
   createSyncRequestId,
   decodeServerFrame,
+  encodeActivityFrame,
   encodeClientFrame,
 } from "./webSocketFrames.js";
 
@@ -34,6 +35,7 @@ export function createSyncWebSocketTransport(options = {}) {
   const random = options.random ?? Math.random;
   const isActive = options.isActive ?? (() => true);
   const socketUrl = options.url ?? defaultSocketUrl();
+  let activityActive = options.initialActivity !== false;
   let running = false;
   let socket;
   let generation = 0;
@@ -155,7 +157,7 @@ export function createSyncWebSocketTransport(options = {}) {
     }
 
     if (frame.type === "sync_hint") {
-      options.onHint?.(frame);
+      if (activityActive) options.onHint?.(frame);
       return;
     }
     if (frame.type === "error") {
@@ -212,6 +214,15 @@ export function createSyncWebSocketTransport(options = {}) {
         scheduleReconnect();
         return;
       }
+      if (!activityActive) {
+        try {
+          current.send(encodeActivityFrame(false));
+        } catch {
+          closeSocket(RPC_TIMEOUT_CLOSE, "activity_send_failed");
+          scheduleReconnect();
+          return;
+        }
+      }
       setState("open");
       scheduleHeartbeat(current, currentGeneration);
       Promise.resolve(options.onOpen?.()).catch((error) => options.onFatalError?.(error));
@@ -261,8 +272,21 @@ export function createSyncWebSocketTransport(options = {}) {
     setState("stopped");
   }
 
+  function setActivity(active) {
+    const next = Boolean(active);
+    if (activityActive === next) return;
+    activityActive = next;
+    if (!socket || socket.readyState !== OPEN || state !== "open") return;
+    try {
+      socket.send(encodeActivityFrame(next));
+    } catch {
+      closeSocket(RPC_TIMEOUT_CLOSE, "activity_send_failed");
+      if (running && isActive()) scheduleReconnect();
+    }
+  }
+
   function request(type, protobuf, { requestId = createSyncRequestId() } = {}) {
-    if (!running || !isActive()) {
+    if (!running || !isActive() || !activityActive) {
       return Promise.reject(syncTransportError("页面未聚焦，云同步已暂停", "SYNC_PAUSED"));
     }
     if (!socket || socket.readyState !== OPEN || state !== "open") {
@@ -298,8 +322,10 @@ export function createSyncWebSocketTransport(options = {}) {
     pause,
     resume,
     stop,
+    setActivity,
     request,
     getState: () => state,
+    isActivityActive: () => activityActive,
     isOpen: () => Boolean(socket && socket.readyState === OPEN && state === "open"),
   };
 }

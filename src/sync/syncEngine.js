@@ -272,13 +272,14 @@ async function rebuildRemoteBaseline({ sentRecords, rejectedEntityKeys }) {
   return rebuiltState;
 }
 
-async function performSync({ allowEmptyPull = false } = {}) {
+async function performSync({ allowEmptyPull = false, uploadMutations = true } = {}) {
   if (!store || !isPageActive() || baselineConflict.value || globalThis.navigator?.onLine === false) return;
   syncing.value = true;
   let mergedConflictCount = 0;
   try {
     const bootstrappedNow = await bootstrapFromServer();
     reconcileOutbox();
+    if (!uploadMutations && syncState.outbox.length) syncPending = true;
     if (!syncState.outbox.length && (bootstrappedNow || !allowEmptyPull)) {
       if (bootstrappedNow) {
         syncState.meta.lastSyncAt = new Date().toISOString();
@@ -297,9 +298,12 @@ async function performSync({ allowEmptyPull = false } = {}) {
 
     let response;
     do {
-      const sentOutbox = syncState.outbox.slice(0, 180);
+      const sentOutbox = uploadMutations ? syncState.outbox.slice(0, 180) : [];
       const sentState = clone(store.mutableState);
       const sentRecords = stateToRecords(sentState);
+      const localOverlay = uploadMutations
+        ? []
+        : diffRecords(serializableToRecords(syncState.meta.baseline), sentRecords);
       response = await exchange(sentOutbox, syncState.meta.cursor);
 
       const acknowledged = new Set(response.acks.map((ack) => ack.opId));
@@ -335,6 +339,15 @@ async function performSync({ allowEmptyPull = false } = {}) {
       updateRecordVersions(response.changes);
       syncState.meta.cursor = response.nextCursor;
 
+      // 聚焦恢复时只拉取远端变化；本地未上传的编辑继续覆盖在最新远端基线上。
+      for (const localChange of localOverlay) {
+        applyRecordValue(
+          serverState,
+          localChange.entityKey,
+          localChange.deleted ? undefined : localChange.value,
+        );
+      }
+
       // 网络往返期间产生的本地编辑重新叠加，留给下一轮作为新 mutation 上传。
       const liveRecords = stateToRecords(store.mutableState);
       for (const localChange of diffRecords(sentRecords, liveRecords)) {
@@ -350,7 +363,11 @@ async function performSync({ allowEmptyPull = false } = {}) {
         await store.replaceFromSync(serverState);
         observedSyncRecords = stateToRecords(store.mutableState);
       }
-    } while (response.hasMore || response.resetRequired || syncState.outbox.length);
+    } while (
+      response.hasMore ||
+      response.resetRequired ||
+      (uploadMutations && syncState.outbox.length)
+    );
 
     syncState.meta.lastSyncAt = new Date().toISOString();
     lastSyncedAt.value = syncState.meta.lastSyncAt;
@@ -406,20 +423,23 @@ function drainPendingSync() {
     globalThis.navigator?.onLine === false ||
     !transport?.isOpen()
   ) return;
-  if (syncPending) {
-    void scheduleCloudSync({ immediate: true });
-    return;
-  }
   if (pullPending) {
     pullPending = false;
     if (!launchSync({ allowEmptyPull: true, source: "pull" })) pullPending = true;
+    return;
+  }
+  if (syncPending) {
+    void scheduleCloudSync({ immediate: true });
   }
 }
 
 function launchSync({ allowEmptyPull = false, source = "change" } = {}) {
   if (!store || activePromise || !transport?.isOpen()) return false;
   lastSyncStartedAt = Date.now();
-  activePromise = performSync({ allowEmptyPull })
+  activePromise = performSync({
+    allowEmptyPull,
+    uploadMutations: source !== "pull",
+  })
     .catch((error) => {
       if (!["RATE_LIMITED", "SYNC_PAUSED", "CONNECTION_LOST"].includes(error.code)) return;
       if (source === "pull") pullPending = true;
@@ -487,24 +507,54 @@ function scheduleChangedStateSync() {
   void scheduleCloudSync({ immediate: false });
 }
 
-function pauseCloudSync() {
+function suspendCloudSyncActivity() {
   const hadScheduledWork = syncTimer !== undefined || Boolean(activePromise);
   clearSyncTimer();
-  clearRetryTimer();
   if (hadScheduledWork) syncPending = true;
   if (activePromise) pullPending = true;
-  transport?.pause();
+  transport?.setActivity(false);
 }
 
-function resumeCloudSync() {
-  if (!isPageActive()) return;
+function resumePendingResolution() {
+  if (!pendingResolutionRequest || !baselineConflict.value) return false;
+  if (!isPageActive() || !transport?.isOpen() || resolvingBaseline.value) return true;
+  void resolveBaseline(pendingResolutionRequest.choice).catch((error) => {
+    if (!["CONNECTION_LOST", "SYNC_PAUSED"].includes(error.code)) syncError.value = error;
+  });
+  return true;
+}
+
+function activateCloudSyncActivity() {
+  if (!isPageActive()) {
+    suspendCloudSyncActivity();
+    return;
+  }
+  const wasActive = transport?.isActivityActive() ?? false;
+  transport?.setActivity(true);
   transport?.resume();
+  if (resumePendingResolution()) return;
+  if (wasActive) return;
+  pullPending = true;
   drainPendingSync();
 }
 
+function pauseCloudSyncOffline() {
+  suspendCloudSyncActivity();
+  transport?.pause();
+}
+
+function resumeCloudSyncOnline() {
+  if (isPageActive()) {
+    activateCloudSyncActivity();
+    return;
+  }
+  transport?.setActivity(false);
+  transport?.resume();
+}
+
 function onCloudVisibilityChange() {
-  if (isPageActive()) resumeCloudSync();
-  else pauseCloudSync();
+  if (isPageActive()) activateCloudSyncActivity();
+  else suspendCloudSyncActivity();
 }
 
 export async function startCloudSync(campaignStore, authenticatedOwnerId, options = {}) {
@@ -525,20 +575,20 @@ export async function startCloudSync(campaignStore, authenticatedOwnerId, option
   lastSyncedAt.value = syncState.meta.lastSyncAt ?? null;
   unsubscribeChanges = store.subscribeToChanges(scheduleChangedStateSync);
   globalThis.document?.addEventListener?.("visibilitychange", onCloudVisibilityChange);
-  globalThis.addEventListener?.("online", resumeCloudSync);
-  globalThis.addEventListener?.("offline", pauseCloudSync);
-  globalThis.addEventListener?.("focus", resumeCloudSync);
-  globalThis.addEventListener?.("blur", pauseCloudSync);
+  globalThis.addEventListener?.("online", resumeCloudSyncOnline);
+  globalThis.addEventListener?.("offline", pauseCloudSyncOffline);
+  globalThis.addEventListener?.("focus", activateCloudSyncActivity);
+  globalThis.addEventListener?.("blur", suspendCloudSyncActivity);
   transport = createSyncWebSocketTransport({
-    isActive: () => Boolean(store && isPageActive() && globalThis.navigator?.onLine !== false),
+    isActive: () => Boolean(store && globalThis.navigator?.onLine !== false),
+    initialActivity: isPageActive(),
     onStateChange: (nextState) => { connectionState.value = nextState; },
     onOpen: () => {
-      if (pendingResolutionRequest && baselineConflict.value) {
-        void resolveBaseline(pendingResolutionRequest.choice).catch((error) => {
-          if (!["CONNECTION_LOST", "SYNC_PAUSED"].includes(error.code)) syncError.value = error;
-        });
+      if (!isPageActive()) {
+        pullPending = true;
         return;
       }
+      if (resumePendingResolution()) return;
       syncPending = false;
       pullPending = false;
       if (!launchSync({ allowEmptyPull: true, source: "reconnect" })) {
@@ -707,10 +757,10 @@ export function stopCloudSync() {
   unsubscribeChanges?.();
   unsubscribeChanges = undefined;
   globalThis.document?.removeEventListener?.("visibilitychange", onCloudVisibilityChange);
-  globalThis.removeEventListener?.("online", resumeCloudSync);
-  globalThis.removeEventListener?.("offline", pauseCloudSync);
-  globalThis.removeEventListener?.("focus", resumeCloudSync);
-  globalThis.removeEventListener?.("blur", pauseCloudSync);
+  globalThis.removeEventListener?.("online", resumeCloudSyncOnline);
+  globalThis.removeEventListener?.("offline", pauseCloudSyncOffline);
+  globalThis.removeEventListener?.("focus", activateCloudSyncActivity);
+  globalThis.removeEventListener?.("blur", suspendCloudSyncActivity);
   store = undefined;
   ownerId = undefined;
   syncState = undefined;

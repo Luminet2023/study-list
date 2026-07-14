@@ -5,6 +5,7 @@ import {
   createSyncRequestId,
   decodeClientFrame,
   decodeServerFrame,
+  encodeActivityFrame,
   encodeClientFrame,
   encodeServerError,
   encodeServerResult,
@@ -37,6 +38,26 @@ test("exchange and resolve request frames round-trip protobuf bytes", () => {
         type,
         protobuf,
       },
+    );
+  }
+});
+
+test("activity frames round-trip active and inactive states", () => {
+  for (const active of [true, false]) {
+    assert.deepEqual(decodeClientFrame(encodeActivityFrame(active)), {
+      version: 1,
+      type: "activity",
+      active,
+    });
+  }
+});
+
+test("activity frames reject non-boolean active values", () => {
+  for (const active of [undefined, null, 0, 1, "true", {}]) {
+    assert.throws(() => encodeActivityFrame(active), TypeError);
+    assertFrameError(
+      () => decodeClientFrame(JSON.stringify({ version: 1, type: "activity", active })),
+      { code: "INVALID_ARGUMENT", closeCode: null },
     );
   }
 });

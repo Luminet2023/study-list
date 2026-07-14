@@ -76,7 +76,7 @@ function connectionAttachment(webSocket) {
   if (!/^[a-f0-9]{64}$/u.test(attachment.ownerKey ?? "")) return null;
   if (!Number.isSafeInteger(attachment.sessionExp)) return null;
   if (typeof attachment.connectionId !== "string" || !attachment.connectionId) return null;
-  return attachment;
+  return { ...attachment, active: attachment.active !== false };
 }
 
 function serializeConnectionAttachment(webSocket, attachment) {
@@ -440,6 +440,7 @@ export class UserSyncCoordinator extends DurableObject {
       deviceId: "",
       baselineId: "",
       cursor: 0,
+      active: true,
     };
     this.ctx.acceptWebSocket(server);
     serializeConnectionAttachment(server, attachment);
@@ -505,6 +506,7 @@ export class UserSyncCoordinator extends DurableObject {
         this.rejectExpiredSession(webSocket);
         continue;
       }
+      if (!attachment.active) continue;
       this.sendWebSocketFrame(webSocket, frame);
     }
   }
@@ -524,6 +526,13 @@ export class UserSyncCoordinator extends DurableObject {
       }
 
       const frame = decodeClientFrame(message);
+      if (frame.type === "activity") {
+        serializeConnectionAttachment(webSocket, {
+          ...attachment,
+          active: frame.active,
+        });
+        return;
+      }
       requestId = frame.requestId;
       const result = frame.type === "exchange"
         ? await this.processExchange(frame.protobuf, attachment.ownerKey)
@@ -537,15 +546,20 @@ export class UserSyncCoordinator extends DurableObject {
         return;
       }
 
+      const latestAttachment = connectionAttachment(webSocket);
+      if (!latestAttachment) {
+        this.closeWebSocket(webSocket, 1011, "Invalid connection state");
+        return;
+      }
       serializeConnectionAttachment(webSocket, {
-        ...attachment,
+        ...latestAttachment,
         deviceId: result.deviceId,
         baselineId: result.baselineId,
         cursor: result.serverCursor,
       });
       const resultType = frame.type === "exchange" ? "exchange_result" : "resolve_result";
       this.sendWebSocketFrame(webSocket, encodeServerResult(resultType, requestId, result.body));
-      this.broadcastSyncHint(result, attachment.connectionId);
+      this.broadcastSyncHint(result, latestAttachment.connectionId);
     } catch (error) {
       if (error instanceof SyncWebSocketFrameError) {
         if (error.closeCode) {

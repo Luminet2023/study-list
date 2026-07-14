@@ -196,6 +196,103 @@ test("sync_hint is delivered without disturbing the active connection", () => {
   assert.equal(transport.isOpen(), true);
 });
 
+test("inactive activity keeps the socket alive while suppressing requests and hints", async () => {
+  const hints = [];
+  const { timers, WebSocketImpl, transport } = createHarness({
+    onHint: (hint) => hints.push(hint),
+  });
+
+  transport.start();
+  const socket = WebSocketImpl.instances[0];
+  socket.open();
+
+  transport.setActivity(false);
+  assert.equal(transport.isActivityActive(), false);
+  assert.equal(transport.isOpen(), true);
+  assert.deepEqual(socket.closeCalls, []);
+  assert.deepEqual(decodeClientFrame(socket.sent[0]), {
+    version: 1,
+    type: "activity",
+    active: false,
+  });
+
+  await assert.rejects(
+    transport.request("exchange", Uint8Array.of(1), { requestId: "request_inactive_0001" }),
+    (error) => error.code === "SYNC_PAUSED",
+  );
+  assert.equal(socket.sent.length, 1);
+
+  socket.message(encodeSyncHint({
+    baselineId: BASELINE_ID,
+    serverCursor: 128,
+    serverVersion: 17,
+  }));
+  assert.deepEqual(hints, []);
+
+  timers.advance(30_000);
+  assert.equal(socket.sent[1], "ping");
+  assert.deepEqual(socket.closeCalls, []);
+  socket.message("pong");
+
+  transport.setActivity(true);
+  assert.equal(transport.isActivityActive(), true);
+  assert.equal(transport.isOpen(), true);
+  assert.deepEqual(decodeClientFrame(socket.sent[2]), {
+    version: 1,
+    type: "activity",
+    active: true,
+  });
+
+  socket.message(encodeSyncHint({
+    baselineId: BASELINE_ID,
+    serverCursor: 129,
+    serverVersion: 18,
+  }));
+  assert.deepEqual(hints, [{
+    version: 1,
+    type: "sync_hint",
+    baselineId: BASELINE_ID,
+    serverCursor: 129,
+    serverVersion: 18,
+  }]);
+
+  const requestId = "request_reactivated_01";
+  const resultPromise = transport.request("exchange", Uint8Array.of(2), { requestId });
+  assert.equal(decodeClientFrame(socket.sent[3]).requestId, requestId);
+  socket.message(encodeServerResult("exchange_result", requestId, Uint8Array.of(3)));
+  assert.deepEqual(await resultPromise, Uint8Array.of(3));
+  assert.deepEqual(socket.closeCalls, []);
+});
+
+test("an inactive reconnect advertises activity false before reopening", async () => {
+  const { timers, WebSocketImpl, transport } = createHarness({ random: () => 0 });
+
+  transport.start();
+  const first = WebSocketImpl.instances[0];
+  first.open();
+  transport.setActivity(false);
+  first.remoteClose();
+
+  assert.equal(transport.getState(), "backoff");
+  timers.advance(0);
+  const second = WebSocketImpl.instances[1];
+  assert.equal(transport.getState(), "connecting");
+  second.open();
+
+  assert.equal(transport.getState(), "open");
+  assert.equal(transport.isOpen(), true);
+  assert.deepEqual(second.closeCalls, []);
+  assert.deepEqual(second.sent.map((message) => decodeClientFrame(message)), [{
+    version: 1,
+    type: "activity",
+    active: false,
+  }]);
+  await assert.rejects(
+    transport.request("exchange", new Uint8Array(), { requestId: "request_still_inactive" }),
+    (error) => error.code === "SYNC_PAUSED",
+  );
+});
+
 test("heartbeat sends ping and a pong arms the next heartbeat", () => {
   const { timers, WebSocketImpl, transport } = createHarness();
 

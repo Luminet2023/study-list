@@ -17,6 +17,7 @@ import {
   MAX_WEBSOCKET_FRAME_BYTES,
   SYNC_WEBSOCKET_PROTOCOL,
   decodeServerFrame,
+  encodeActivityFrame,
   encodeClientFrame,
 } from "../../src/sync/webSocketFrames.js";
 
@@ -175,6 +176,10 @@ function sendResolve(webSocket, bytes, requestId) {
   webSocket.send(encodeClientFrame("resolve", bytes, requestId));
 }
 
+function sendActivity(webSocket, active) {
+  webSocket.send(encodeActivityFrame(active));
+}
+
 afterEach(() => {
   for (const webSocket of openSockets) {
     try {
@@ -287,6 +292,64 @@ describe("sync WebSocket transport", () => {
     expect(response.changes).toEqual([]);
   });
 
+  it("keeps inactive connections open without hints and resumes hints when active", async () => {
+    const subject = "activity-user";
+    const reader = await openWebSocket(subject);
+    const writer = await openWebSocket(subject);
+    const readerInbox = socketInbox(reader);
+    const writerInbox = socketInbox(writer);
+
+    sendActivity(reader, false);
+    sendExchange(
+      reader,
+      syncRequest({ deviceId: "device_reader" }),
+      "request_inactive_barrier",
+    );
+    await readerInbox.next((frame) => frame.requestId === "request_inactive_barrier");
+
+    sendExchange(
+      writer,
+      syncRequest({ mutations: [mutation({ opId: "operation_inactive_0001" })] }),
+      "request_inactive_write_1",
+    );
+    await writerInbox.next((frame) => frame.requestId === "request_inactive_write_1");
+    await readerInbox.expectNoMessage((frame) => frame.type === "sync_hint");
+    expect(reader.readyState).toBe(WebSocket.OPEN);
+
+    sendActivity(reader, true);
+    sendExchange(
+      reader,
+      syncRequest({ deviceId: "device_reader", cursor: 0 }),
+      "request_resume_pull_0001",
+    );
+    const resumedPullFrame = await readerInbox.next(
+      (frame) => frame.requestId === "request_resume_pull_0001",
+    );
+    const resumedPull = decodeSyncResponse(resumedPullFrame.protobuf);
+    expect(resumedPull.nextCursor).toBe(1);
+    expect(resumedPull.changes).toMatchObject([{ opId: "operation_inactive_0001" }]);
+
+    sendExchange(
+      writer,
+      syncRequest({
+        mutations: [mutation({
+          opId: "operation_active_0002",
+          entityKey: "stella/v1/preference/fontFamily",
+          value: "system",
+          clientSeq: 2,
+        })],
+      }),
+      "request_active_write_02",
+    );
+    await writerInbox.next((frame) => frame.requestId === "request_active_write_02");
+    const hint = await readerInbox.next((frame) => frame.type === "sync_hint");
+    expect(hint).toMatchObject({
+      type: "sync_hint",
+      serverCursor: 2,
+    });
+    expect(reader.readyState).toBe(WebSocket.OPEN);
+  });
+
   it("preserves hibernatable connections and attachments across Durable Object eviction", async () => {
     const subject = "hibernation-user";
     const writer = await openWebSocket(subject);
@@ -310,6 +373,47 @@ describe("sync WebSocket transport", () => {
       applied: true,
     });
     expect(hint).toMatchObject({ serverCursor: 1, serverVersion: 1 });
+  });
+
+  it("preserves inactive hint suppression across Durable Object eviction", async () => {
+    const subject = "inactive-hibernation-user";
+    const reader = await openWebSocket(subject);
+    const writer = await openWebSocket(subject);
+    const readerInbox = socketInbox(reader);
+    const writerInbox = socketInbox(writer);
+    const ownerKey = await sha256Hex(`linuxdo:${subject}`);
+    const coordinator = env.USER_SYNC.getByName(ownerKey);
+
+    sendActivity(reader, false);
+    sendExchange(
+      reader,
+      syncRequest({ deviceId: "device_reader" }),
+      "request_inactive_evict_barrier",
+    );
+    await readerInbox.next((frame) => frame.requestId === "request_inactive_evict_barrier");
+    await evictDurableObject(coordinator, { webSockets: "hibernate" });
+
+    sendExchange(
+      writer,
+      syncRequest({ mutations: [mutation({ opId: "operation_inactive_evict" })] }),
+      "request_inactive_evict_write",
+    );
+    await writerInbox.next((frame) => frame.requestId === "request_inactive_evict_write");
+    await readerInbox.expectNoMessage((frame) => frame.type === "sync_hint");
+    expect(reader.readyState).toBe(WebSocket.OPEN);
+
+    sendActivity(reader, true);
+    sendExchange(
+      reader,
+      syncRequest({ deviceId: "device_reader", cursor: 0 }),
+      "request_evict_resume_pull",
+    );
+    const resumedPullFrame = await readerInbox.next(
+      (frame) => frame.requestId === "request_evict_resume_pull",
+    );
+    const resumedPull = decodeSyncResponse(resumedPullFrame.protobuf);
+    expect(resumedPull.nextCursor).toBe(1);
+    expect(resumedPull.changes).toMatchObject([{ opId: "operation_inactive_evict" }]);
   });
 
   it("broadcasts legacy HTTP writes and returns byte-equivalent results for WebSocket replay", async () => {
