@@ -53,6 +53,27 @@ test("generated Service Worker bypasses APIs and provides offline navigation", (
   assert.match(source, /\/assets\/index-test\.js/u);
 });
 
+test("generated Service Worker forces the 2026-07-15 refresh only once per existing client", () => {
+  const source = renderServiceWorker({
+    version: "forced-refresh-version",
+    precacheUrls: ["/index.html"],
+  });
+
+  assert.match(source, /MIGRATION_CACHE_NAME = "stella-migrations"/u);
+  assert.match(source, /force-refresh-2026-07-15-v1/u);
+  assert.match(source, /if \(!self\.registration\.active\) \{/u);
+  assert.match(source, /await self\.skipWaiting\(\)/u);
+  assert.match(source, /await self\.clients\.claim\(\)/u);
+  assert.match(source, /includeUncontrolled: true/u);
+  assert.match(source, /return client\.navigate\(url\.href\)/u);
+  assert.match(source, /PRECACHE_NAME, RUNTIME_NAME, MIGRATION_CACHE_NAME/u);
+});
+
+test("Cloudflare serves the Service Worker without browser caching", async () => {
+  const headers = await readFile(new URL("public/_headers", ROOT), "utf8");
+  assert.match(headers, /\/service-worker\.js[\s\S]+Cache-Control: no-store, no-cache, must-revalidate/u);
+});
+
 test("PWA registration requests a root scope without using the HTTP cache", async () => {
   const calls = [];
   const listeners = [];

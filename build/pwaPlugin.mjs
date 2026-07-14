@@ -33,24 +33,57 @@ export function renderServiceWorker({ version, precacheUrls }) {
 const PRECACHE_NAME = \`stella-precache-\${VERSION}\`;
 const RUNTIME_NAME = \`stella-runtime-\${VERSION}\`;
 const CACHE_PREFIX = "stella-";
+const MIGRATION_CACHE_NAME = "stella-migrations";
+const FORCE_REFRESH_MARKER_URL = new URL(
+  "/__stella_migrations__/force-refresh-2026-07-15-v1",
+  self.location.origin,
+).href;
 const PRECACHE_URLS = ${JSON.stringify(precacheUrls, null, 2)};
 
 self.addEventListener("install", (event) => {
-  event.waitUntil(
-    caches.open(PRECACHE_NAME).then((cache) => cache.addAll(PRECACHE_URLS)),
-  );
+  event.waitUntil((async () => {
+    const precache = await caches.open(PRECACHE_NAME);
+    await precache.addAll(PRECACHE_URLS);
+
+    const migrations = await caches.open(MIGRATION_CACHE_NAME);
+    const alreadyRefreshed = await migrations.match(FORCE_REFRESH_MARKER_URL);
+    if (alreadyRefreshed) return;
+
+    if (!self.registration.active) {
+      await migrations.put(FORCE_REFRESH_MARKER_URL, new Response(VERSION));
+      return;
+    }
+
+    await self.skipWaiting();
+  })());
 });
 
 self.addEventListener("activate", (event) => {
-  event.waitUntil(
-    caches.keys()
-      .then((names) => Promise.all(
-        names
-          .filter((name) => name.startsWith(CACHE_PREFIX) && ![PRECACHE_NAME, RUNTIME_NAME].includes(name))
-          .map((name) => caches.delete(name)),
-      ))
-      .then(() => self.clients.claim()),
-  );
+  event.waitUntil((async () => {
+    const migrations = await caches.open(MIGRATION_CACHE_NAME);
+    const shouldForceRefresh = !(await migrations.match(FORCE_REFRESH_MARKER_URL));
+    const names = await caches.keys();
+    await Promise.all(
+      names
+        .filter((name) => name.startsWith(CACHE_PREFIX)
+          && ![PRECACHE_NAME, RUNTIME_NAME, MIGRATION_CACHE_NAME].includes(name))
+        .map((name) => caches.delete(name)),
+    );
+
+    await self.clients.claim();
+    if (!shouldForceRefresh) return;
+
+    await migrations.put(FORCE_REFRESH_MARKER_URL, new Response(VERSION));
+    const windowClients = await self.clients.matchAll({
+      type: "window",
+      includeUncontrolled: true,
+    });
+    await Promise.allSettled(windowClients.map((client) => {
+      const url = new URL(client.url);
+      if (url.origin !== self.location.origin) return undefined;
+      return client.navigate(url.href);
+    }));
+  })());
 });
 
 async function networkFirstNavigation(request) {
