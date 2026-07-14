@@ -32,11 +32,12 @@ test("minimal mode hides statistics and cloud surfaces without gating sync start
   assert.match(editor, /<v-tooltip\s+v-if="!minimalMode"/u);
 });
 
-test("minimal mode hides the drawer brand and its divider", async () => {
+test("minimal mode hides the drawer brand, divider, and logged-out login action", async () => {
   const app = await readSource("../src/App.vue");
 
   assert.match(app, /<v-list-item v-if="!minimalMode" class="drawer-brand py-5"/u);
   assert.match(app, /<v-divider v-if="!minimalMode" \/>/u);
+  assert.match(app, /<div v-else-if="!minimalMode" class="linuxdo-login-wrap">/u);
 });
 
 test("minimal mode removes the journal status chip", async () => {

@@ -72,6 +72,8 @@ const dayTurnBusy = ref(false);
 const dayTurnEarState = ref(null);
 const snackbarQueue = ref([]);
 const spinning = ref(false);
+const DRAW_ANIMATION_DURATION_MS = 1800;
+const DRAW_RESULT_DIALOG_HOLD_MS = 5000;
 const lastResult = ref(null);
 const pendingDrawMode = ref(null);
 const slot6Dialog = ref(false);
@@ -888,8 +890,9 @@ async function resolveSlot6(redistribute) {
 
 async function executeDraw(mode, redistribute) {
   spinning.value = true;
+  let resultNotice = null;
   try {
-    await new Promise((resolve) => setTimeout(resolve, 1800));
+    await new Promise((resolve) => setTimeout(resolve, DRAW_ANIMATION_DURATION_MS));
     const result = await store.performDraw(store.today.value, mode, redistribute);
     const won = result.prize.kind !== "none";
     lastResult.value = {
@@ -898,12 +901,22 @@ async function executeDraw(mode, redistribute) {
       won,
       description: won ? "奖励已收入今日抽签，点击兑现后生效" : "风停在空签上，把好运留给下一次",
     };
-    enqueue(won ? "恭喜中奖，请在今日抽签中兑现" : "本次未中，记录已保存", won ? "secondary" : "outline");
+    resultNotice = {
+      text: won ? "恭喜中奖，请在今日抽签中兑现" : "本次未中，记录已保存",
+      color: won ? "secondary" : "outline",
+    };
+    await new Promise((resolve) => setTimeout(resolve, DRAW_RESULT_DIALOG_HOLD_MS));
   } catch (error) {
-    enqueue(error.message || "抽签未能完成", "error", 4200);
+    resultNotice = {
+      text: error.message || "抽签未能完成",
+      color: "error",
+      timeout: 4200,
+    };
   } finally {
     spinning.value = false;
+    await nextTick();
   }
+  enqueue(resultNotice.text, resultNotice.color, resultNotice.timeout);
 }
 
 async function redeemDraw(drawId) {
@@ -1190,7 +1203,7 @@ onMounted(async () => {
                 />
               </template>
             </v-list-item>
-            <div v-else class="linuxdo-login-wrap">
+            <div v-else-if="!minimalMode" class="linuxdo-login-wrap">
               <v-btn
                 block
                 variant="tonal"
