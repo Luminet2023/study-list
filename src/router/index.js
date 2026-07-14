@@ -1,4 +1,4 @@
-import { createRouter, createWebHashHistory } from "vue-router";
+import { createRouter, createWebHistory } from "vue-router";
 
 import { CAMPAIGN_START, clampCampaignDate } from "../domain/campaign.js";
 
@@ -16,6 +16,11 @@ function shanghaiToday() {
 }
 
 const initialDate = clampCampaignDate(shanghaiToday()) || CAMPAIGN_START;
+
+// 兼容旧书签：首次打开 /#/day/... 时直接迁移到无 Hash 的标准路径。
+if (typeof window !== "undefined" && window.location.hash.startsWith("#/")) {
+  window.history.replaceState(window.history.state, "", window.location.hash.slice(1));
+}
 
 const routes = [
   {
@@ -65,13 +70,25 @@ const routes = [
     meta: { viewMode: "raffle", label: "摸鱼大转盘" },
   },
   {
+    path: "/settings",
+    name: "settings",
+    component: RouteMarker,
+    meta: { viewMode: "settings", label: "设置" },
+  },
+  {
+    path: "/ending",
+    name: "ending",
+    component: RouteMarker,
+    meta: { viewMode: "ending", label: "旅程终章" },
+  },
+  {
     path: "/:pathMatch(.*)*",
     redirect: { name: "day", params: { date: initialDate } },
   },
 ];
 
 export const router = createRouter({
-  history: createWebHashHistory(),
+  history: createWebHistory(import.meta.env.BASE_URL),
   routes,
   scrollBehavior: () => ({ left: 0, top: 0 }),
 });

@@ -1,4 +1,14 @@
 <script setup>
+import { computed } from "vue";
+import { useTheme } from "vuetify";
+
+const theme = useTheme();
+const foldAsset = computed(() =>
+  theme.global.current.value.dark
+    ? "/assets/page-fold-dark.png"
+    : "/assets/page-fold.png",
+);
+
 defineProps({
   side: {
     type: String,
@@ -13,6 +23,10 @@ defineProps({
     type: Boolean,
     default: false,
   },
+  ariaLabel: {
+    type: String,
+    default: "",
+  },
 });
 
 defineEmits(["navigate"]);
@@ -24,7 +38,7 @@ defineEmits(["navigate"]);
     :class="`day-ear--${side}`"
     variant="text"
     :disabled="disabled"
-    :aria-label="side === 'left' ? '前一天' : '后一天'"
+    :aria-label="ariaLabel || (side === 'left' ? '前一天' : '后一天')"
     @click="$emit('navigate')"
   >
     <v-icon :icon="side === 'left' ? 'mdi-chevron-left' : 'mdi-chevron-right'" size="24" />
@@ -32,7 +46,7 @@ defineEmits(["navigate"]);
     <v-img
       class="day-ear__fold"
       :class="{ 'day-ear__fold--mirror': side === 'right' }"
-      src="/assets/page-fold.png"
+      :src="foldAsset"
       width="46"
       height="46"
       alt=""
@@ -43,7 +57,7 @@ defineEmits(["navigate"]);
 
 <style scoped>
 .day-ear {
-  border: 1px solid rgba(132, 124, 127, 0.48);
+  border: 1px solid rgba(var(--v-theme-outline), 0.68);
   border-left: 0;
   border-radius: 0 22px 22px 0;
   height: 184px;
@@ -60,7 +74,7 @@ defineEmits(["navigate"]);
 }
 
 .day-ear--right {
-  border-left: 1px solid rgba(132, 124, 127, 0.48);
+  border-left: 1px solid rgba(var(--v-theme-outline), 0.68);
   border-radius: 22px 0 0 22px;
   border-right: 0;
   right: 0;
@@ -75,7 +89,7 @@ defineEmits(["navigate"]);
 }
 
 .day-ear__label {
-  font-family: "Noto Serif SC", "Songti SC", serif;
+  font-family: var(--app-font-family);
   font-size: 11px;
   line-height: 1.25;
   white-space: nowrap;
