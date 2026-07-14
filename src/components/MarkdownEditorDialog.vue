@@ -282,18 +282,6 @@ function applyTool(tool) {
 </template>
 
 <style scoped>
-.markdown-editor-card {
-  height: min(86dvh, 780px);
-  border: 1px solid rgba(var(--v-theme-outline), 0.35);
-  background-image: url("/assets/study-wash-bg.png");
-  background-position: center top;
-  background-size: cover;
-}
-
-:global(.v-theme--poeticNight) .markdown-editor-card {
-  background-image: url("/assets/study-wash-bg-dark.png");
-}
-
 .editor-heading :deep(.v-toolbar-title) {
   font-size: 1.08rem;
   font-weight: 600;
