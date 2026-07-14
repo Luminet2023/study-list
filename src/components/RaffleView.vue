@@ -35,9 +35,24 @@ const props = defineProps({
     type: Array,
     default: () => [],
   },
+  awardSlot6Confirmation: {
+    type: Object,
+    default: null,
+  },
+  redeemingDrawId: {
+    type: String,
+    default: null,
+  },
 });
 
-const emit = defineEmits(["draw", "claim-paper", "back"]);
+const emit = defineEmits([
+  "draw",
+  "redeem",
+  "claim-paper",
+  "back",
+  "rules",
+  "resolve-award-slot6",
+]);
 
 const paperDialog = ref(false);
 
@@ -90,9 +105,47 @@ const normalizedDraws = computed(() =>
         draw.sourceLabel ||
         draw.detail ||
         (draw.source === "paper" || draw.type === "paper" ? "试卷额外机会" : "每日机会"),
+      won: draw.won ?? draw.prizeId !== "none",
+      canRedeem: Boolean(draw.canRedeem),
+      redeemed: Boolean(draw.redeemed),
     };
   }),
 );
+
+const wheelEntries = computed(() => {
+  const labels = props.probabilitySummary
+    .map((entry) => String(entry?.label ?? "").trim())
+    .filter(Boolean);
+  const fallbacks = ["未中", "免任务", "免周六", "免全天", "免整周", "好运", "喘口气", "再接再厉"];
+  return [...new Set([...labels, ...fallbacks])].slice(0, 8);
+});
+
+function shortWheelLabel(label) {
+  return String(label)
+    .replace("下一个工作日", "工作日")
+    .replace("下一工作日", "工作日")
+    .replace("下一周工作日", "整周")
+    .slice(0, 7);
+}
+
+function wheelLabelStyle(index) {
+  const angle = index * 45;
+  return { transform: `rotate(${angle}deg) translateY(-88px) rotate(${-angle}deg)` };
+}
+
+const awardSlot6Dates = computed(() =>
+  Array.isArray(props.awardSlot6Confirmation?.dates)
+    ? props.awardSlot6Confirmation.dates
+    : [],
+);
+
+function resolveAwardSlot6(keepBlank) {
+  emit("resolve-award-slot6", {
+    keepBlank,
+    dates: awardSlot6Dates.value,
+    prizeId: props.awardSlot6Confirmation?.prizeId ?? null,
+  });
+}
 
 function confirmPaperClaim() {
   paperDialog.value = false;
@@ -103,19 +156,19 @@ function confirmPaperClaim() {
 <template>
   <VSheet class="raffle-view" color="transparent">
     <VToolbar class="raffle-toolbar" color="transparent" density="compact">
+      <VToolbarTitle class="raffle-title">摸鱼大转盘</VToolbarTitle>
       <VBtn
-        aria-label="返回上一页"
-        icon="mdi-arrow-left"
+        aria-label="查看规则说明"
+        icon="mdi-information-outline"
         min-width="44"
         variant="text"
-        @click="emit('back')"
+        @click="emit('rules')"
       />
-      <VToolbarTitle class="raffle-title">摸鱼大转盘</VToolbarTitle>
-      <VBtn aria-label="抽奖规则" icon="mdi-information-outline" min-width="44" variant="text" />
     </VToolbar>
 
     <main class="raffle-content">
-      <section aria-labelledby="raffle-stage-heading">
+      <div class="raffle-column raffle-column--primary">
+      <section class="raffle-stage-section" aria-labelledby="raffle-stage-heading">
         <VCard class="raffle-stage" variant="outlined">
           <VCardItem class="pb-0">
             <template #prepend>
@@ -145,11 +198,20 @@ function confirmPaperClaim() {
               color="primary"
             >
               <VFadeTransition mode="out-in">
-                <div :key="spinning ? 'spinning' : 'ready'" class="stage-center">
-                  <VIcon
-                    :icon="spinning ? 'mdi-shimmer' : 'mdi-dice-multiple-outline'"
-                    size="34"
-                  />
+                <div
+                  :key="spinning ? 'spinning' : 'ready'"
+                  class="stage-center"
+                  :class="{ 'stage-center--spinning': spinning }"
+                >
+                  <span class="fortune-token" aria-hidden="true">
+                    <VIcon
+                      class="fortune-token__icon"
+                      :icon="spinning ? 'mdi-dice-multiple' : 'mdi-dice-multiple-outline'"
+                      size="34"
+                    />
+                    <i v-if="spinning" class="fortune-token__slip fortune-token__slip--left" />
+                    <i v-if="spinning" class="fortune-token__slip fortune-token__slip--right" />
+                  </span>
                   <span>{{ spinning ? "正在落签" : "轻触抽签" }}</span>
                   <small>{{ spinning ? "请稍候" : "让努力喘口气" }}</small>
                 </div>
@@ -178,14 +240,61 @@ function confirmPaperClaim() {
         </VCard>
       </section>
 
+      <section v-if="normalizedDraws.length" class="history-section" aria-labelledby="today-draws-heading">
+        <div class="section-heading">
+          <VIcon icon="mdi-history" size="20" />
+          <h2 id="today-draws-heading">今日抽签</h2>
+        </div>
+        <VCard variant="outlined">
+          <VList bg-color="transparent" density="comfortable" lines="two">
+            <template v-for="(draw, index) in normalizedDraws" :key="draw.id">
+              <VListItem :subtitle="draw.detail" :title="draw.label">
+                <template #prepend>
+                  <VAvatar color="surface-variant" size="32">
+                    <VIcon :icon="draw.won ? 'mdi-star-four-points-outline' : 'mdi-ticket-outline'" size="18" />
+                  </VAvatar>
+                </template>
+                <template v-if="draw.canRedeem || draw.redeemed" #append>
+                  <VBtn
+                    v-if="draw.canRedeem"
+                    :aria-label="`兑现奖励：${draw.label}`"
+                    color="primary"
+                    :loading="redeemingDrawId === draw.id"
+                    min-height="36"
+                    prepend-icon="mdi-gift-open-outline"
+                    size="small"
+                    variant="tonal"
+                    @click.stop="emit('redeem', draw.id)"
+                  >
+                    兑现
+                  </VBtn>
+                  <VChip
+                    v-else
+                    color="secondary"
+                    prepend-icon="mdi-check-decagram-outline"
+                    size="small"
+                    variant="tonal"
+                  >
+                    已兑现
+                  </VChip>
+                </template>
+              </VListItem>
+              <VDivider v-if="index < normalizedDraws.length - 1" inset />
+            </template>
+          </VList>
+        </VCard>
+      </section>
+      </div>
+
+      <div class="raffle-column raffle-column--secondary">
+
       <VFadeTransition mode="out-in">
         <VCard
           v-if="lastResult"
           :key="resultTitle"
           aria-live="polite"
           class="result-card"
-          color="surface-variant"
-          variant="flat"
+          variant="outlined"
         >
           <VCardItem>
             <template #prepend>
@@ -197,7 +306,7 @@ function confirmPaperClaim() {
         </VCard>
       </VFadeTransition>
 
-      <section aria-labelledby="paper-chance-heading">
+      <section class="paper-section" aria-labelledby="paper-chance-heading">
         <VCard class="paper-card" variant="outlined">
           <VListItem class="paper-summary" lines="two">
             <template #prepend>
@@ -250,28 +359,7 @@ function confirmPaperClaim() {
         </VCard>
       </section>
 
-      <section v-if="normalizedDraws.length" aria-labelledby="today-draws-heading">
-        <div class="section-heading">
-          <VIcon icon="mdi-history" size="20" />
-          <h2 id="today-draws-heading">今日抽签</h2>
-        </div>
-        <VCard variant="outlined">
-          <VList bg-color="transparent" density="comfortable" lines="two">
-            <template v-for="(draw, index) in normalizedDraws" :key="draw.id">
-              <VListItem :subtitle="draw.detail" :title="draw.label">
-                <template #prepend>
-                  <VAvatar color="surface-variant" size="32">
-                    <VIcon icon="mdi-ticket-outline" size="18" />
-                  </VAvatar>
-                </template>
-              </VListItem>
-              <VDivider v-if="index < normalizedDraws.length - 1" inset />
-            </template>
-          </VList>
-        </VCard>
-      </section>
-
-      <section aria-label="抽奖概率">
+      <section class="probability-section" aria-label="抽奖概率">
         <VExpansionPanels class="probability-panels" variant="accordion">
           <VExpansionPanel elevation="0">
             <VExpansionPanelTitle>
@@ -304,7 +392,56 @@ function confirmPaperClaim() {
           </VExpansionPanel>
         </VExpansionPanels>
       </section>
+      </div>
     </main>
+
+    <VDialog
+      :model-value="spinning"
+      max-width="390"
+      persistent
+      scrim="background"
+      transition="fade-transition"
+    >
+      <VCard class="draw-wheel-dialog-card" variant="outlined" aria-live="polite">
+        <VCardItem class="pb-0">
+          <template #prepend>
+            <VAvatar color="secondary" size="38" variant="tonal">
+              <VIcon icon="mdi-dice-multiple-outline" size="22" />
+            </VAvatar>
+          </template>
+          <VCardTitle class="draw-dialog-title">正在抽取今日签</VCardTitle>
+          <VCardSubtitle>轮盘转动中，请稍候片刻</VCardSubtitle>
+        </VCardItem>
+
+        <VCardText class="draw-dialog-body">
+          <div class="draw-wheel-shell" role="img" aria-label="抽奖轮盘正在旋转">
+            <span class="draw-wheel-pointer" aria-hidden="true" />
+            <div class="draw-wheel draw-wheel--spinning" aria-hidden="true">
+              <span
+                v-for="(label, index) in wheelEntries"
+                :key="`${label}-${index}`"
+                class="draw-wheel-label"
+                :style="wheelLabelStyle(index)"
+              >
+                {{ shortWheelLabel(label) }}
+              </span>
+            </div>
+            <div class="draw-wheel-hub" aria-hidden="true">
+              <VIcon icon="mdi-clover-outline" size="26" />
+            </div>
+          </div>
+
+          <VProgressLinear
+            class="draw-progress"
+            color="primary"
+            height="4"
+            indeterminate
+            rounded
+          />
+          <p class="draw-dialog-note">分区用于展示抽取过程，实际结果仍按今日动态概率池计算。</p>
+        </VCardText>
+      </VCard>
+    </VDialog>
 
     <VDialog v-model="paperDialog" max-width="340">
       <VCard class="confirm-card" variant="outlined">
@@ -326,6 +463,22 @@ function confirmPaperClaim() {
         </VCardActions>
       </VCard>
     </VDialog>
+
+    <VDialog :model-value="Boolean(awardSlot6Confirmation)" max-width="380" persistent>
+      <VCard class="confirm-card" variant="outlined">
+        <VCardItem prepend-icon="mdi-calendar-check-outline">
+          <VCardTitle>确认第 6 项安排</VCardTitle>
+          <VCardSubtitle>全天免项已生效，概率不会改变</VCardSubtitle>
+        </VCardItem>
+        <VCardText>
+          {{ awardSlot6Dates.join("、") }} 的第 6 项仍为空。保持留白时不计入计划；选择填写时，可返回对应日期补充，且仍会继承本次免项。
+        </VCardText>
+        <VCardActions class="flex-column align-stretch ga-2 px-4 pb-4">
+          <VBtn min-height="44" variant="text" @click="resolveAwardSlot6(false)">返回填写第 6 项</VBtn>
+          <VBtn color="primary" min-height="44" variant="flat" @click="resolveAwardSlot6(true)">确认保持留白</VBtn>
+        </VCardActions>
+      </VCard>
+    </VDialog>
   </VSheet>
 </template>
 
@@ -344,6 +497,10 @@ function confirmPaperClaim() {
   overscroll-behavior-y: contain;
 }
 
+:global(.v-theme--poeticNight) .raffle-view {
+  background-image: url("/assets/raffle-wash-bg-dark.png");
+}
+
 .raffle-toolbar {
   position: sticky;
   top: 0;
@@ -353,7 +510,7 @@ function confirmPaperClaim() {
 }
 
 .raffle-title {
-  font-family: "Noto Serif SC", "Songti SC", serif;
+  font-family: var(--app-font-family);
   font-size: 1rem;
   letter-spacing: 0.16em;
   text-align: center;
@@ -368,6 +525,30 @@ function confirmPaperClaim() {
   padding: 16px 16px calc(28px + env(safe-area-inset-bottom));
 }
 
+.raffle-column {
+  display: contents;
+}
+
+.raffle-stage-section {
+  order: 1;
+}
+
+.result-card {
+  order: 2;
+}
+
+.paper-section {
+  order: 3;
+}
+
+.history-section {
+  order: 4;
+}
+
+.probability-section {
+  order: 5;
+}
+
 .raffle-stage,
 .paper-card,
 .probability-panels,
@@ -378,7 +559,7 @@ function confirmPaperClaim() {
 
 .stage-title,
 .result-title {
-  font-family: "Noto Serif SC", "Songti SC", serif;
+  font-family: var(--app-font-family);
   font-size: 1rem;
   letter-spacing: 0.08em;
 }
@@ -397,7 +578,7 @@ function confirmPaperClaim() {
   align-items: center;
   gap: 5px;
   color: rgb(var(--v-theme-primary));
-  font-family: "Noto Serif SC", "Songti SC", serif;
+  font-family: var(--app-font-family);
   letter-spacing: 0.08em;
 }
 
@@ -407,6 +588,63 @@ function confirmPaperClaim() {
   font-size: 0.72rem;
   letter-spacing: 0.04em;
   opacity: 0.62;
+}
+
+.fortune-token {
+  display: grid;
+  place-items: center;
+  width: 54px;
+  height: 50px;
+  position: relative;
+  transform-origin: 50% 72%;
+}
+
+.fortune-token__icon {
+  position: relative;
+  z-index: 2;
+}
+
+.fortune-token__slip {
+  width: 3px;
+  height: 24px;
+  border-radius: 2px;
+  position: absolute;
+  top: -5px;
+  background: rgb(var(--v-theme-secondary));
+  opacity: 0.72;
+  transform-origin: bottom center;
+}
+
+.fortune-token__slip--left { transform: translateX(-10px) rotate(-18deg); }
+.fortune-token__slip--right { transform: translateX(10px) rotate(18deg); }
+
+.stage-center--spinning .fortune-token {
+  animation: fortune-cup-shake 520ms cubic-bezier(.36, .07, .19, .97) infinite;
+}
+
+.stage-center--spinning .fortune-token__icon {
+  animation: fortune-dice-tumble 780ms cubic-bezier(.5, .08, .35, .95) infinite;
+}
+
+.stage-center--spinning .fortune-token__slip {
+  animation: fortune-slip-rise 620ms ease-in-out infinite alternate;
+}
+
+@keyframes fortune-cup-shake {
+  0%, 100% { transform: translate3d(0, 0, 0) rotate(-5deg); }
+  35% { transform: translate3d(-5px, -3px, 0) rotate(7deg); }
+  70% { transform: translate3d(5px, -1px, 0) rotate(-7deg); }
+}
+
+@keyframes fortune-dice-tumble {
+  0% { transform: rotate(0deg) scale(.92); }
+  50% { transform: rotate(190deg) scale(1.08); }
+  100% { transform: rotate(360deg) scale(.92); }
+}
+
+@keyframes fortune-slip-rise {
+  from { margin-top: 5px; opacity: .42; }
+  to { margin-top: -5px; opacity: .9; }
 }
 
 .primary-action {
@@ -454,7 +692,7 @@ function confirmPaperClaim() {
 
 .section-heading h2 {
   margin: 0;
-  font-family: "Noto Serif SC", "Songti SC", serif;
+  font-family: var(--app-font-family);
   font-size: 0.92rem;
   font-weight: 500;
   letter-spacing: 0.12em;
@@ -479,7 +717,137 @@ function confirmPaperClaim() {
 }
 
 .confirm-card {
+  color: rgb(var(--v-theme-on-surface));
+  background-color: rgb(var(--v-theme-surface));
+}
+
+.confirm-card :deep(.v-card-title) {
+  color: rgb(var(--v-theme-on-surface));
+}
+
+.confirm-card :deep(.v-card-text) {
+  color: rgba(var(--v-theme-on-surface), 0.82);
+}
+
+.draw-wheel-dialog-card {
+  color: rgb(var(--v-theme-on-surface));
+  border-color: rgba(var(--v-theme-outline), 0.42);
+  background-color: rgb(var(--v-theme-surface));
+  box-shadow: none !important;
+}
+
+.draw-dialog-title {
+  color: rgb(var(--v-theme-on-surface));
+  font-family: var(--app-font-family);
+  letter-spacing: 0.08em;
+}
+
+.draw-dialog-body {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding-top: 18px;
+}
+
+.draw-wheel-shell {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 246px;
+  height: 246px;
+}
+
+.draw-wheel {
+  position: relative;
+  width: 222px;
+  height: 222px;
+  overflow: hidden;
+  border: 1px solid rgba(var(--v-theme-outline), 0.72);
+  border-radius: 50%;
+  background:
+    repeating-conic-gradient(
+      from -22.5deg,
+      rgba(var(--v-theme-outline), 0.5) 0 1deg,
+      transparent 1deg 45deg
+    ),
+    conic-gradient(
+      from -22.5deg,
+      rgba(var(--v-theme-primary), 0.2) 0 45deg,
+      rgba(var(--v-theme-secondary), 0.16) 45deg 90deg,
+      rgba(var(--v-theme-tertiary), 0.18) 90deg 135deg,
+      rgba(var(--v-theme-primary), 0.1) 135deg 180deg,
+      rgba(var(--v-theme-secondary), 0.2) 180deg 225deg,
+      rgba(var(--v-theme-tertiary), 0.12) 225deg 270deg,
+      rgba(var(--v-theme-primary), 0.18) 270deg 315deg,
+      rgba(var(--v-theme-secondary), 0.12) 315deg 360deg
+    );
+  box-shadow: inset 0 0 0 6px rgba(var(--v-theme-surface), 0.76);
+}
+
+.draw-wheel--spinning {
+  animation: draw-wheel-spin 560ms linear infinite;
+}
+
+.draw-wheel-label {
+  position: absolute;
+  left: calc(50% - 34px);
+  top: calc(50% - 9px);
+  width: 68px;
+  color: rgb(var(--v-theme-on-surface));
+  font-family: var(--app-font-family);
+  font-size: 0.68rem;
+  line-height: 18px;
+  text-align: center;
+  white-space: nowrap;
+}
+
+.draw-wheel-hub {
+  position: absolute;
+  display: grid;
+  place-items: center;
+  width: 62px;
+  height: 62px;
+  border: 1px solid rgba(var(--v-theme-outline), 0.58);
+  border-radius: 50%;
+  color: rgb(var(--v-theme-primary));
   background: rgb(var(--v-theme-surface));
+  box-shadow: 0 0 0 5px rgba(var(--v-theme-surface), 0.64);
+}
+
+.draw-wheel-pointer {
+  position: absolute;
+  top: 1px;
+  z-index: 2;
+  width: 0;
+  height: 0;
+  border-right: 11px solid transparent;
+  border-left: 11px solid transparent;
+  border-top: 25px solid rgb(var(--v-theme-secondary));
+  filter: drop-shadow(0 2px 1px rgba(var(--v-theme-on-surface), 0.18));
+  animation: draw-pointer-tick 280ms ease-in-out infinite alternate;
+}
+
+.draw-progress {
+  width: min(100%, 270px);
+  margin-top: 10px;
+}
+
+.draw-dialog-note {
+  max-width: 300px;
+  margin: 12px auto 0;
+  color: rgba(var(--v-theme-on-surface), 0.64);
+  font-size: 0.72rem;
+  line-height: 1.65;
+  text-align: center;
+}
+
+@keyframes draw-wheel-spin {
+  to { transform: rotate(360deg); }
+}
+
+@keyframes draw-pointer-tick {
+  from { transform: rotate(-4deg); }
+  to { transform: rotate(4deg); }
 }
 
 @media (max-width: 359px) {
@@ -490,12 +858,76 @@ function confirmPaperClaim() {
   .paper-summary {
     padding-inline: 10px;
   }
+
+  .draw-wheel-shell {
+    width: 222px;
+    height: 222px;
+  }
+
+  .draw-wheel {
+    width: 202px;
+    height: 202px;
+  }
+
+  .draw-wheel-label {
+    transform-origin: 34px 9px;
+  }
 }
 
 @media (min-width: 960px) {
   .raffle-view {
     background-position: center;
     background-size: cover;
+  }
+
+  .raffle-content {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    align-items: start;
+    gap: 14px;
+    max-width: 960px;
+    padding: 20px 32px 32px;
+  }
+
+  .raffle-column {
+    display: grid;
+    align-content: start;
+    gap: 14px;
+    min-width: 0;
+  }
+
+  .raffle-stage {
+    min-height: 0;
+  }
+
+  .stage-body {
+    gap: 10px;
+    padding: 12px 16px 14px;
+  }
+
+  .paper-summary {
+    min-height: 64px;
+  }
+
+  .paper-actions {
+    min-height: 52px;
+    padding-block: 4px;
+  }
+
+  .section-heading {
+    margin-bottom: 7px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .stage-center--spinning .fortune-token,
+  .stage-center--spinning .fortune-token__icon,
+  .stage-center--spinning .fortune-token__slip {
+    animation: none;
+  }
+
+  .draw-wheel--spinning,
+  .draw-wheel-pointer {
+    animation: none;
   }
 }
 </style>
