@@ -1,0 +1,42 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "stellafortuna",
+  "main": "./worker/index.js",
+  "compatibility_date": "2026-07-08",
+  "compatibility_flags": ["nodejs_compat"],
+  "assets": {
+    "directory": "./dist",
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": ["/api/*"]
+  },
+  "vars": {
+    "LINUXDO_CLIENT_ID": "qGr5wxPhTR0YipsKF2lbBGz6IL2n446K"
+  },
+  "secrets": {
+    "required": ["LINUXDO_CLIENT_SECRET", "SESSION_JWT_SECRET"]
+  },
+  "kv_namespaces": [
+    {
+      "binding": "SYNC_KV"
+    }
+  ],
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "USER_SYNC",
+        "class_name": "UserSyncCoordinator"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": ["UserSyncCoordinator"]
+    }
+  ],
+  "observability": {
+    "enabled": true,
+    "head_sampling_rate": 1
+  }
+}
