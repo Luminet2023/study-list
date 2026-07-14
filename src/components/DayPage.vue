@@ -37,6 +37,7 @@ defineEmits([
   "unlock",
   "update-item",
   "update-diary",
+  "update-journal-draft",
   "update-saturday-item",
   "remove-saturday-item",
   "add-saturday-item",
@@ -98,6 +99,7 @@ defineEmits([
         :date="date"
         :items="page.workdayItems"
         :diary="page.day?.journal ?? ''"
+        :cloud-draft="page.day?.journalDraft ?? ''"
         :goals-ready="page.goalsReady"
         :goals-locked="page.goalsLocked"
         :journal-unlocked="page.journalUnlocked"
@@ -106,6 +108,7 @@ defineEmits([
         @unlock="$emit('unlock')"
         @update-item="$emit('update-item', $event)"
         @update:diary="$emit('update-diary', $event)"
+        @update:cloud-draft="$emit('update-journal-draft', $event)"
       />
 
       <SaturdayView

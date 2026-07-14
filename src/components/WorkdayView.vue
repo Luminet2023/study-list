@@ -21,6 +21,10 @@ const props = defineProps({
     type: String,
     default: "",
   },
+  cloudDraft: {
+    type: String,
+    default: "",
+  },
   compact: {
     type: Boolean,
     default: true,
@@ -39,7 +43,14 @@ const props = defineProps({
   },
 });
 
-const emit = defineEmits(["cycle", "request-lock", "unlock", "update-item", "update:diary"]);
+const emit = defineEmits([
+  "cycle",
+  "request-lock",
+  "unlock",
+  "update-item",
+  "update:diary",
+  "update:cloud-draft",
+]);
 const journalDialog = ref(false);
 
 watch(() => props.date, () => {
@@ -270,7 +281,7 @@ const saveJournal = (value) => {
         role="button"
         :tabindex="journalUnlocked ? 0 : -1"
         :aria-disabled="!journalUnlocked"
-        aria-label="打开 Markdown 日记编辑器"
+        aria-label="打开日记编辑器"
         @click="openJournal"
         @keydown.enter.prevent="openJournal"
         @keydown.space.prevent="openJournal"
@@ -294,7 +305,7 @@ const saveJournal = (value) => {
           <MarkdownContent
             v-if="journalUnlocked"
             :source="diary"
-            empty-text="点击这里，用 Markdown 写下今天的日结或日记……"
+            empty-text="点击这里，写下今天的日结或日记……"
           />
           <p v-else class="diary-placeholder">
             {{ goalsLocked ? "请将每项目标标记为完成或未完成" : "先填写并锁定今日目标" }}
@@ -312,7 +323,9 @@ const saveJournal = (value) => {
       <MarkdownEditorDialog
         v-model="journalDialog"
         :content="diary"
+        :cloud-draft="cloudDraft"
         @save="saveJournal"
+        @update:cloud-draft="emit('update:cloud-draft', $event)"
       />
     </section>
   </v-fade-transition>

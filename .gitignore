@@ -7,3 +7,4 @@ tmp/
 qa/
 *.log
 .DS_Store
+backend/

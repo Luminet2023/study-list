@@ -97,7 +97,7 @@ await page.waitForTimeout(450);
 
 const firstStatus = page.locator(".status-button").first();
 const lastStatus = page.locator(".status-button").last();
-const diaryTrigger = page.getByRole("button", { name: "打开 Markdown 日记编辑器" });
+const diaryTrigger = page.getByRole("button", { name: "打开日记编辑器" });
 
 const assertDiaryLocked = async (message) => {
   if ((await diaryTrigger.getAttribute("aria-disabled")) !== "true") {
@@ -171,7 +171,7 @@ if ((await page.locator(".study-item--completed").count()) !== 7) {
 }
 await assertDiaryUnlocked("完成全部 checkbox 后日结未解锁");
 await diaryTrigger.click();
-const diaryField = page.getByRole("textbox", { name: "Markdown 日记内容" });
+const diaryField = page.getByRole("textbox", { name: "日记内容" });
 await diaryField.waitFor({ state: "visible" });
 await diaryField.fill("今天把细小的疑问写清楚了。");
 await page.getByRole("button", { name: "保存日记" }).click();
@@ -187,7 +187,7 @@ if ((await page.locator(".status-button:enabled").count()) !== 7) {
   throw new Error("目标锁定状态刷新后未恢复");
 }
 await diaryTrigger.click();
-const restoredDiaryField = page.getByRole("textbox", { name: "Markdown 日记内容" });
+const restoredDiaryField = page.getByRole("textbox", { name: "日记内容" });
 if ((await restoredDiaryField.inputValue()) !== "今天把细小的疑问写清楚了。") {
   throw new Error("日结内容刷新恢复失败");
 }

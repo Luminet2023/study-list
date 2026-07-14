@@ -447,6 +447,16 @@ function updateJournal(date, value) {
   return true;
 }
 
+function updateJournalDraft(date, value) {
+  const day = getDay(date);
+  if (!day) return false;
+  if (day.type === DAY_TYPE.WORKDAY && !isWorkdayJournalUnlocked(day, state)) {
+    return false;
+  }
+  state.days[date] = { ...day, journalDraft: String(value ?? "") };
+  return true;
+}
+
 function lockGoals(date) {
   const day = getDay(date);
   if (!day || day.type !== DAY_TYPE.WORKDAY) return false;
@@ -697,6 +707,7 @@ export function useCampaignStore() {
     cycleStatus,
     updateItem,
     updateJournal,
+    updateJournalDraft,
     lockGoals,
     unlockGoals,
     updateSaturdayItem,

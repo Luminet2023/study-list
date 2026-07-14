@@ -113,7 +113,7 @@ Post-fix visual evidence:
 
 - 工作日第 4、6、7 项未全部填写时，八个状态按钮与日记入口均保持禁用。
 - 填写完整后仅开放“核对并锁定今日目标”；确认弹窗逐项展示八个最终目标，并明确区分固定目标与用户填写内容。
-- 确认锁定后输入变为只读、状态按钮开放；八项有效状态全部完成后才开放 Markdown 日记编辑器，转盘免项按完成处理。
+- 确认锁定后输入变为只读、状态按钮开放；八项有效状态全部完成后才开放日记编辑器，转盘免项按完成处理。
 - IndexedDB 刷新回归确认：填写内容、锁定状态、八项完成状态与日记内容均恢复成功。
 - 360 / 390 / 430 px 无水平溢出，1440 px 桌面壳体与 286 px 常驻侧栏保持稳定，浏览器控制台无错误。
 - Post-fix visual evidence:
@@ -171,7 +171,7 @@ Post-fix visual evidence:
 - PC 全屏：应用宽度与 1440 px 视口一致；所有独立路由均保持 286 px 常驻侧栏。
 - Snackbar Queue：连续复制 3 次，验证 3 条 active toast 与至少 2 层 collapsed toast。
 - Vuetify：浏览器运行版本对应锁定的 `4.1.4` 构建，stable 垂直步骤条与 Snackbar Queue 均正常渲染。
-- 工作日门禁：填写 4 / 6 / 7 → 弹窗核对 → 锁定 → 八项完成 → Markdown 日记解锁；刷新后完整恢复。
+- 工作日门禁：填写 4 / 6 / 7 → 弹窗核对 → 锁定 → 八项完成 → 日记解锁；刷新后完整恢复。
 - browser console errors checked: `none`
 - page errors checked: `none`
 

@@ -1317,6 +1317,7 @@ onMounted(async () => {
               @unlock="undoGoalLockForDate(date)"
               @update-item="store.updateItem(date, $event.slot, $event.value)"
               @update-diary="store.updateJournal(date, $event)"
+              @update-journal-draft="store.updateJournalDraft(date, $event)"
               @update-saturday-item="store.updateSaturdayItem(date, $event.id, $event.value)"
               @remove-saturday-item="store.removeSaturday(date, $event)"
               @add-saturday-item="store.addSaturdayItem(date, $event)"
@@ -1600,7 +1601,7 @@ onMounted(async () => {
             <v-list-item
               prepend-icon="mdi-book-edit-outline"
               title="日记"
-              subtitle="当日有效目标均标记为完成或未完成后解锁，内容支持 Markdown，并自动保存在本地。"
+              subtitle="当日有效目标均标记为完成或未完成后解锁，内容会自动保存在本地。"
             />
             <v-list-item
               prepend-icon="mdi-calendar-weekend-outline"

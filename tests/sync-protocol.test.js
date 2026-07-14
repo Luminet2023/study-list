@@ -123,6 +123,32 @@ test("state records create field-level deltas and apply remote values", () => {
   assert.equal(beforeState.preferences.fontFamily, "system");
 });
 
+test("journal cloud drafts use a dedicated record and do not overwrite the journal", () => {
+  const state = createDefaultState();
+  state.days["2026-07-13"].journal = "正式日记";
+  state.days["2026-07-13"].journalDraft = "尚未发布的草稿";
+
+  const records = stateToRecords(state);
+  assert.equal(records.get("stella/v1/day/2026-07-13/journal"), "正式日记");
+  assert.equal(
+    records.get("stella/v1/day/2026-07-13/journalDraft"),
+    "尚未发布的草稿",
+  );
+
+  const restored = createDefaultState();
+  applyWireChanges(restored, [{
+    cursor: 1,
+    entityKey: "stella/v1/day/2026-07-13/journalDraft",
+    valueJson: encodeJsonValue("云端草稿"),
+    deleted: false,
+    deviceId: "device-test",
+    clientTimeMs: Date.now(),
+    opId: "op-draft",
+  }]);
+  assert.equal(restored.days["2026-07-13"].journal, "");
+  assert.equal(restored.days["2026-07-13"].journalDraft, "云端草稿");
+});
+
 test("an untouched database produces no cloud records and deletions restore defaults", () => {
   const state = createDefaultState();
   assert.equal(stateToRecords(state).size, 0);

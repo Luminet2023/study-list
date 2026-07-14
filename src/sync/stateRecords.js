@@ -37,6 +37,10 @@ export function stateToRecords(state) {
     if (journal !== (defaultDay?.journal ?? "")) {
       records.set(key("day", date, "journal"), journal);
     }
+    const journalDraft = day.journalDraft ?? "";
+    if (journalDraft !== (defaultDay?.journalDraft ?? "")) {
+      records.set(key("day", date, "journalDraft"), journalDraft);
+    }
     const goals = {
       locked: Boolean(day.goalsLocked),
       lockedAt: day.goalsLockedAt ?? null,
@@ -139,6 +143,9 @@ export function applyRecordValue(state, entityKey, value) {
     if (!day) return false;
     const defaultDay = DEFAULT_STATE.days?.[date];
     if (kind === "journal") day.journal = value === undefined ? (defaultDay?.journal ?? "") : String(value);
+    else if (kind === "journalDraft") {
+      day.journalDraft = value === undefined ? (defaultDay?.journalDraft ?? "") : String(value);
+    }
     else if (kind === "goals") {
       day.goalsLocked = value === undefined ? Boolean(defaultDay?.goalsLocked) : Boolean(value?.locked);
       day.goalsLockedAt = value === undefined ? (defaultDay?.goalsLockedAt ?? null) : (value?.lockedAt ?? null);

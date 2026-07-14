@@ -25,3 +25,5 @@ When implementing from a selected generated mock, treat that image as the source
 - 移动端侧边栏隐藏时，左下角固定显示云同步状态 `v-fab`；同步中使用进度环，其余状态使用云端图标。点击 FAB 从上方打开紧凑 `v-menu` 查看同步状态、最近同步时间和 Linux DO 账号操作；`mdAndUp` 桌面端继续只在侧边栏显示，不重复渲染 FAB。
 - 应用以 PWA 方式提供安装与离线启动：构建期生成带内容版本号的 Service Worker 预缓存清单，静态页面与资源可缓存，但同源开发路径 `/v1/` 与退役路径 `/api/` 必须始终绕过 Service Worker，生产 API 跨源直连 `https://api.luminet.cn/hifumi/`，避免 OAuth、Session 和同步响应进入 Cache Storage。PWA 图标沿用暖色宣纸、深梅色笔尖与朱红印记的视觉语言，并保留 maskable 安全区。
 - 生产前端同时发布在 `https://stellafortuna.hifumi.luminet.cn/` 与 `https://stellafortuna.luminet.cn/`；所有 API 请求使用 `credentials: "include"`，页面采用 `strict-origin-when-cross-origin` Referer 策略，服务端须精确校验这两个 Origin/Referer。
+- 日记编辑器为每个日期维护独立的 `journalDraft` 云草稿记录；输入后先进入本地批量保存与云同步队列，编辑器内提供云图标用于立即写入。再次打开时优先恢复草稿，正式保存日记后清除对应草稿；草稿不得计入学习进度或日记统计。
+- 日记编辑器只提供纯文本输入，不提供格式工具栏、编辑/预览切换或编辑器内富文本预览；历史 Markdown 数据仍按原样保存并兼容现有只读展示。

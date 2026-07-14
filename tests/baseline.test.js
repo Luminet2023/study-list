@@ -37,3 +37,9 @@ test("automatically binding hitokoto does not advance learning progress", () => 
   };
   assert.equal(summarizeCampaignProgress(state).progressDay, "2026-07-13");
 });
+
+test("journal cloud drafts do not advance learning progress", () => {
+  const state = createDefaultState();
+  state.days["2026-07-20"].journalDraft = "尚未发布的云草稿";
+  assert.equal(summarizeCampaignProgress(state).progressDay, "2026-07-13");
+});

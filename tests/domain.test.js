@@ -352,6 +352,7 @@ test("Saturday starts with centered-title model and one blank line", () => {
   assert.equal(day.items[0].slot, 1);
   assert.equal(getItemText(day.items[0]), "");
   assert.equal(day.journal, "");
+  assert.equal(day.journalDraft, "");
 });
 
 test("Saturday append/remove renumbers and always retains one line", () => {

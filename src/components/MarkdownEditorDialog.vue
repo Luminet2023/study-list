@@ -4,7 +4,6 @@ import { useDisplay } from "vuetify";
 
 import { countMarkdownCharacters } from "../lib/markdown.js";
 import { createUndoHistory } from "../lib/undoHistory.js";
-import MarkdownContent from "./MarkdownContent.vue";
 
 const props = defineProps({
   modelValue: {
@@ -15,49 +14,56 @@ const props = defineProps({
     type: String,
     default: "",
   },
+  cloudDraft: {
+    type: String,
+    default: "",
+  },
 });
 
-const emit = defineEmits(["update:modelValue", "save"]);
+const emit = defineEmits(["update:modelValue", "save", "update:cloudDraft"]);
 const { smAndDown } = useDisplay();
 const draft = ref("");
-const mode = ref("edit");
 const editorField = ref(null);
 const history = createUndoHistory();
 let historyTimer;
-
-const tools = [
-  { key: "heading", icon: "mdi-format-header-pound", label: "二级标题", prefix: "## ", line: true },
-  { key: "bold", icon: "mdi-format-bold", label: "粗体", before: "**", after: "**", sample: "重点" },
-  { key: "italic", icon: "mdi-format-italic", label: "斜体", before: "*", after: "*", sample: "文字" },
-  { key: "strike", icon: "mdi-format-strikethrough", label: "删除线", before: "~~", after: "~~", sample: "文字" },
-  { key: "quote", icon: "mdi-format-quote-close", label: "引用", prefix: "> ", line: true },
-  { key: "bullet", icon: "mdi-format-list-bulleted", label: "无序列表", prefix: "- ", line: true },
-  { key: "ordered", icon: "mdi-format-list-numbered", label: "有序列表", prefix: "1. ", line: true },
-  { key: "link", icon: "mdi-link-variant", label: "链接", before: "[", after: "](https://)", sample: "链接文字" },
-  { key: "code", icon: "mdi-code-tags", label: "行内代码", before: "`", after: "`", sample: "code" },
-  {
-    key: "table",
-    icon: "mdi-table",
-    label: "表格",
-    insert: "\n| 项目 | 记录 |\n| --- | --- |\n| 今日 |  |\n",
-  },
-];
+let cloudDraftTimer;
 
 const characterCount = computed(() => countMarkdownCharacters(draft.value));
+const cloudDraftValue = computed(() => String(props.cloudDraft ?? ""));
+const cloudDraftPending = computed(
+  () => draft.value !== props.content && draft.value !== cloudDraftValue.value,
+);
+const cloudDraftCurrent = computed(
+  () => Boolean(cloudDraftValue.value) && draft.value === cloudDraftValue.value,
+);
+const cloudDraftIcon = computed(() => {
+  if (cloudDraftPending.value) return "mdi-cloud-upload-outline";
+  if (cloudDraftCurrent.value) return "mdi-cloud-check-outline";
+  return "mdi-cloud-outline";
+});
+const cloudDraftLabel = computed(() => {
+  if (cloudDraftPending.value) return "立即保存到云草稿";
+  if (cloudDraftCurrent.value) return "云草稿已更新";
+  return "云草稿会在输入后自动保存";
+});
 
 watch(
   () => props.modelValue,
   (opened) => {
     if (!opened) return;
     clearHistoryTimer();
-    draft.value = props.content;
-    history.reset(props.content);
-    mode.value = "edit";
+    clearCloudDraftTimer();
+    const initialValue = cloudDraftValue.value || props.content;
+    draft.value = initialValue;
+    history.reset(initialValue);
     nextTick(() => editorField.value?.$el?.querySelector("textarea")?.focus());
   },
 );
 
-onBeforeUnmount(clearHistoryTimer);
+onBeforeUnmount(() => {
+  clearHistoryTimer();
+  clearCloudDraftTimer();
+});
 
 function clearHistoryTimer() {
   if (!historyTimer) return;
@@ -70,15 +76,35 @@ function commitDraftHistory() {
   history.record(draft.value);
 }
 
+function clearCloudDraftTimer() {
+  if (!cloudDraftTimer) return;
+  clearTimeout(cloudDraftTimer);
+  cloudDraftTimer = undefined;
+}
+
+function persistCloudDraft() {
+  clearCloudDraftTimer();
+  const value = draft.value === props.content ? "" : draft.value;
+  if (value === cloudDraftValue.value) return;
+  emit("update:cloudDraft", value);
+}
+
+function scheduleCloudDraft() {
+  clearCloudDraftTimer();
+  cloudDraftTimer = setTimeout(persistCloudDraft, 900);
+}
+
 function updateDraft(value) {
   draft.value = String(value ?? "");
   clearHistoryTimer();
   historyTimer = setTimeout(commitDraftHistory, 400);
+  scheduleCloudDraft();
 }
 
 function restoreDraft(value) {
   clearHistoryTimer();
   draft.value = value;
+  scheduleCloudDraft();
   nextTick(() => {
     const textarea = editorField.value?.$el?.querySelector("textarea");
     if (!textarea) return;
@@ -112,72 +138,18 @@ function onEditorKeydown(event) {
 
 function close() {
   clearHistoryTimer();
+  persistCloudDraft();
   emit("update:modelValue", false);
 }
 
 function save() {
   commitDraftHistory();
+  clearCloudDraftTimer();
   emit("save", draft.value);
-  close();
+  if (cloudDraftValue.value) emit("update:cloudDraft", "");
+  emit("update:modelValue", false);
 }
 
-function switchMode(nextMode) {
-  if (!nextMode) return;
-  if (nextMode === "preview") {
-    const textarea = editorField.value?.$el?.querySelector("textarea");
-    if (textarea && textarea.value !== draft.value) updateDraft(textarea.value);
-    commitDraftHistory();
-  }
-  mode.value = nextMode;
-}
-
-function applyTool(tool) {
-  const textarea = editorField.value?.$el?.querySelector("textarea");
-  if (!textarea) return;
-  commitDraftHistory();
-  const start = textarea.selectionStart ?? draft.value.length;
-  const end = textarea.selectionEnd ?? start;
-  const selected = draft.value.slice(start, end);
-  let replacement;
-  let selectionStart;
-  let selectionEnd;
-
-  if (tool.insert) {
-    replacement = tool.insert;
-    selectionStart = start + replacement.length;
-    selectionEnd = selectionStart;
-  } else if (tool.line) {
-    const lineStart = draft.value.lastIndexOf("\n", Math.max(0, start - 1)) + 1;
-    const lineEndIndex = draft.value.indexOf("\n", end);
-    const lineEnd = lineEndIndex === -1 ? draft.value.length : lineEndIndex;
-    const lines = draft.value.slice(lineStart, lineEnd);
-    replacement = lines
-      .split("\n")
-      .map((line) => `${tool.prefix}${line}`)
-      .join("\n");
-    draft.value = `${draft.value.slice(0, lineStart)}${replacement}${draft.value.slice(lineEnd)}`;
-    history.record(draft.value);
-    selectionStart = lineStart + tool.prefix.length;
-    selectionEnd = lineStart + replacement.length;
-    nextTick(() => {
-      textarea.focus();
-      textarea.setSelectionRange(selectionStart, selectionEnd);
-    });
-    return;
-  } else {
-    const body = selected || tool.sample;
-    replacement = `${tool.before}${body}${tool.after}`;
-    selectionStart = start + tool.before.length;
-    selectionEnd = selectionStart + body.length;
-  }
-
-  draft.value = `${draft.value.slice(0, start)}${replacement}${draft.value.slice(end)}`;
-  history.record(draft.value);
-  nextTick(() => {
-    textarea.focus();
-    textarea.setSelectionRange(selectionStart, selectionEnd);
-  });
-}
 </script>
 
 <template>
@@ -199,70 +171,41 @@ function applyTool(tool) {
       <v-divider />
 
       <v-card-text class="editor-body">
-        <div class="editor-mode-row">
-          <v-btn-toggle
-            :model-value="mode"
-            mandatory
-            color="primary"
-            density="compact"
-            variant="outlined"
-            @update:model-value="switchMode"
-          >
-            <v-btn value="edit" prepend-icon="mdi-pencil-outline">编辑</v-btn>
-            <v-btn value="preview" prepend-icon="mdi-eye-outline">预览</v-btn>
-          </v-btn-toggle>
-        </div>
-
         <div class="editor-pane">
-          <div class="markdown-toolbar" role="toolbar" aria-label="Markdown 格式工具">
+          <div class="markdown-input-surface">
             <v-tooltip
-              v-for="tool in tools"
-              :key="tool.key"
-              :text="tool.label"
+              :text="cloudDraftLabel"
               content-class="markdown-editor-tooltip"
               location="top"
             >
               <template #activator="{ props: activatorProps }">
                 <v-btn
                   v-bind="activatorProps"
-                  :disabled="mode === 'preview'"
-                  :icon="tool.icon"
-                  :aria-label="tool.label"
+                  class="cloud-draft-button"
+                  :color="cloudDraftCurrent ? 'primary' : undefined"
+                  :icon="cloudDraftIcon"
+                  :aria-label="cloudDraftLabel"
                   size="40"
-                  variant="text"
-                  @click="applyTool(tool)"
+                  variant="tonal"
+                  @click="persistCloudDraft"
                 />
               </template>
             </v-tooltip>
-          </div>
 
-          <div class="markdown-input-surface">
             <v-textarea
-              v-show="mode === 'edit'"
               ref="editorField"
               :model-value="draft"
               class="markdown-textarea"
-              aria-label="Markdown 日记内容"
+              aria-label="日记内容"
               auto-grow
               autofocus
               hide-details
-              placeholder="在这里写下今天。可以使用标题、列表、引用、链接与代码……"
+              placeholder="在这里写下今天……"
               rows="14"
               variant="plain"
               @keydown="onEditorKeydown"
               @update:model-value="updateDraft"
             />
-
-            <div
-              v-show="mode === 'preview'"
-              class="markdown-preview"
-              aria-label="Markdown 预览"
-            >
-              <MarkdownContent
-                :source="draft"
-                empty-text="还没有内容可预览"
-              />
-            </div>
           </div>
         </div>
       </v-card-text>
@@ -295,39 +238,11 @@ function applyTool(tool) {
   padding: 18px 20px;
 }
 
-.editor-mode-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  margin-bottom: 14px;
-}
-
-.editor-hint {
-  color: rgba(var(--v-theme-on-surface), 0.5);
-  font-size: 0.76rem;
-  letter-spacing: 0.08em;
-}
-
 .editor-pane {
   display: flex;
   flex: 1 1 auto;
   flex-direction: column;
   min-height: 0;
-}
-
-.markdown-toolbar {
-  display: flex;
-  flex: 0 0 auto;
-  gap: 2px;
-  max-width: 100%;
-  margin-bottom: 12px;
-  padding: 5px;
-  overflow-x: auto;
-  border: 1px solid rgba(var(--v-theme-outline), 0.28);
-  border-radius: 12px;
-  background: rgba(var(--v-theme-surface), 0.86);
-  scrollbar-width: thin;
 }
 
 .markdown-textarea {
@@ -349,7 +264,15 @@ function applyTool(tool) {
   border: 1px solid rgba(var(--v-theme-outline), 0.62);
   border-radius: 6px;
   background: rgba(var(--v-theme-surface), 0.18);
+  position: relative;
   transition: border-color 120ms ease, box-shadow 120ms ease;
+}
+
+.cloud-draft-button {
+  position: absolute;
+  right: 10px;
+  top: 10px;
+  z-index: 2;
 }
 
 .markdown-input-surface:focus-within {
@@ -358,7 +281,7 @@ function applyTool(tool) {
 }
 
 .markdown-textarea :deep(.v-field__input) {
-  padding: 18px 22px;
+  padding: 18px 62px 18px 22px;
 }
 
 .markdown-textarea :deep(textarea) {
@@ -367,13 +290,6 @@ function applyTool(tool) {
   font-size: 1rem;
   line-height: 1.9;
   resize: none;
-}
-
-.markdown-preview {
-  height: 100%;
-  min-height: 320px;
-  overflow-y: auto;
-  padding: 20px 22px;
 }
 
 .editor-actions {
@@ -399,14 +315,6 @@ function applyTool(tool) {
     padding: 12px;
   }
 
-  .editor-mode-row {
-    margin-bottom: 10px;
-  }
-
-  .markdown-toolbar {
-    margin-bottom: 10px;
-  }
-
   .markdown-textarea :deep(.v-input__control),
   .markdown-textarea :deep(.v-field) {
     min-height: 0;
@@ -417,12 +325,8 @@ function applyTool(tool) {
   }
 
   .markdown-textarea :deep(textarea) {
-    min-height: calc(100dvh - 330px);
+    min-height: calc(100dvh - 210px);
   }
 
-  .markdown-preview {
-    min-height: calc(100dvh - 330px);
-    padding: 16px;
-  }
 }
 </style>

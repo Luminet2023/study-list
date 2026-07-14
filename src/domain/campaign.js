@@ -345,6 +345,7 @@ export function createSaturdayItem(date, slot, input = "") {
  * @property {string|null} title
  * @property {PlanItem[]} items
  * @property {string} journal
+ * @property {string} journalDraft
  * @property {boolean} goalsLocked
  * @property {string|null} goalsLockedAt
  * @property {{liked:boolean, likedAt:string|null, hitokoto:Object|null}} blessing
@@ -366,6 +367,7 @@ export function createDefaultDay(date) {
           ? [createSaturdayItem(key, 1)]
           : [],
     journal: "",
+    journalDraft: "",
     goalsLocked: type === DAY_TYPE.WORKDAY ? false : true,
     goalsLockedAt: null,
     blessing: { liked: false, likedAt: null, hitokoto: null },
