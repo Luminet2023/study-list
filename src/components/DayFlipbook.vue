@@ -1,54 +1,103 @@
 <script setup>
-import { nextTick, onBeforeUnmount, ref, watch } from "vue";
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 
-import { orderFlipbookPages } from "../lib/dayPageTransition.js";
+import {
+  createDayFlipbookPages,
+  findDayFlipbookPosition,
+} from "../lib/dayPageTransition.js";
 
 const props = defineProps({
+  active: {
+    type: Boolean,
+    default: true,
+  },
+  dates: {
+    type: Array,
+    default: () => [],
+  },
+  selectedDate: {
+    type: String,
+    required: true,
+  },
   enabled: {
     type: Boolean,
     default: false,
   },
   duration: {
     type: Number,
-    default: 600,
+    default: 850,
   },
 });
 
-const emit = defineEmits(["update:busy", "animation-error"]);
+const emit = defineEmits([
+  "update:busy",
+  "animation-error",
+  "navigate",
+]);
 
 const host = ref(null);
 const book = ref(null);
-const overlayVisible = ref(false);
 const busy = ref(false);
 const phase = ref("idle");
+const engineReady = ref(false);
+const engineUnavailable = ref(false);
+const bookMounted = ref(props.enabled);
+const engineInstanceId = ref(0);
+const pageEntries = computed(() => createDayFlipbookPages(props.dates));
 
-let flipbookEngine = null;
-let flipbookEnginePromise = null;
-let flipbookEventHandler = null;
-let finishActiveTurn = null;
-let cancelEnginePreload = null;
+let pageFlip = null;
+let pageFlipModulePromise = null;
+let ensureEnginePromise = null;
+let pendingTurn = null;
+let fallbackTimer;
+let pendingSettleFrame;
+let resizeObserver;
+let resizeTimer;
+let lastWidth = 0;
+let lastHeight = 0;
+let layoutDirty = false;
 let destroyed = false;
+let internalCommitDate = null;
+let transitionEpoch = 0;
+let requestEngineFrames = () => {};
+
+let swipeActive = false;
+let swipeStartX = 0;
+let swipeStartY = 0;
+let swipeStartedOnControl = false;
+let suppressClickUntil = 0;
+
+function positionForDate(date) {
+  return findDayFlipbookPosition(props.dates, date);
+}
 
 function setBusy(value) {
+  if (value) swipeActive = false;
   busy.value = value;
   emit("update:busy", value);
+  if (!value) flushDeferredLayout();
 }
 
 function prefersReducedMotion() {
   return globalThis.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches ?? false;
 }
 
-async function loadFlipbookEngine() {
-  if (!flipbookEnginePromise) {
-    flipbookEnginePromise = Promise.all([
-      import("@strata-packages/flipbook"),
-      import("@strata-packages/flipbook/css"),
-    ]).then(([flipbookModule]) => flipbookModule.default ?? flipbookModule);
-  }
-  return flipbookEnginePromise;
+function sourcePageAt(position) {
+  return book.value?.querySelector?.(
+    `[data-day-flipbook-source][data-page-position="${position}"]`,
+  ) ?? null;
 }
 
-function copyLiveControlState(source, clone) {
+function scrollPageToTop(position = positionForDate(props.selectedDate)) {
+  const page = sourcePageAt(position)?.querySelector?.(".day-page")
+    ?? host.value?.querySelector?.(".day-flipbook__classic .day-page");
+  page?.scrollTo?.({ top: 0, behavior: "instant" });
+  if (page && typeof page.scrollTo !== "function") page.scrollTop = 0;
+}
+
+function copyLiveDomState(source, clone) {
+  if (!source || !clone) return;
+
   const sourceControls = source.querySelectorAll("input, textarea, select, details");
   const clonedControls = clone.querySelectorAll("input, textarea, select, details");
   sourceControls.forEach((control, index) => {
@@ -63,394 +112,765 @@ function copyLiveControlState(source, clone) {
       clonedControl.open = control.open;
     }
   });
-}
 
-function createSnapshot(source) {
-  const clone = source.cloneNode(true);
-  copyLiveControlState(source, clone);
-  clone.querySelectorAll("[id], [for], [aria-controls], [aria-describedby], [aria-labelledby]")
-    .forEach((element) => {
-      element.removeAttribute("id");
-      element.removeAttribute("for");
-      element.removeAttribute("aria-controls");
-      element.removeAttribute("aria-describedby");
-      element.removeAttribute("aria-labelledby");
-    });
-  clone.removeAttribute("id");
-  clone.setAttribute("aria-hidden", "true");
-  clone.setAttribute("inert", "");
-  clone.style.pointerEvents = "none";
-  clone.dataset.snapshotScrollTop = String(source.scrollTop ?? 0);
-  return clone;
-}
-
-function wrapSnapshot(snapshot) {
-  const page = document.createElement("div");
-  page.className = "day-flipbook-page paper-surface";
-  page.setAttribute("aria-hidden", "true");
-  page.setAttribute("inert", "");
-  page.append(snapshot);
-  return page;
-}
-
-function restoreSnapshotScrollPositions() {
-  for (const snapshot of book.value?.querySelectorAll?.("[data-snapshot-scroll-top]") ?? []) {
-    snapshot.scrollTop = Number(snapshot.dataset.snapshotScrollTop ?? 0);
+  const sourceScroll = source.querySelector(".day-page");
+  const clonedScroll = clone.querySelector(".day-page");
+  if (sourceScroll && clonedScroll) {
+    clonedScroll.scrollTop = sourceScroll.scrollTop;
+    clonedScroll.scrollLeft = sourceScroll.scrollLeft;
   }
 }
 
-function revealDestinationUnderlay(engineHost, direction, destinationPage) {
-  const selector = direction === "previous"
-    ? ".st-flipbook-page-right"
-    : ".st-flipbook-page-left";
-  const underlay = engineHost.querySelector(selector);
-  if (!underlay) return;
-  // Strata clones every input page during initialization, so the original
-  // destination wrapper is free to become the static page below the leaf.
-  // Moving it avoids one more deep clone of the complete Day DOM.
-  underlay.replaceChildren(destinationPage);
-  underlay.setAttribute("data-st-flip-blank", "false");
+const clonedReferenceAttributes = [
+  "id",
+  "for",
+  "aria-controls",
+  "aria-describedby",
+  "aria-labelledby",
+  "aria-current",
+];
+
+function neutralizeTemporaryCopy(root) {
+  if (!root) return;
+  const selector = clonedReferenceAttributes.map((attribute) => `[${attribute}]`).join(",");
+  const nodes = [root, ...root.querySelectorAll(selector)];
+  nodes.forEach((element) => {
+    clonedReferenceAttributes.forEach((attribute) => element.removeAttribute(attribute));
+  });
+  root.dataset.temporaryCopy = "true";
+  root.removeAttribute("data-day-flipbook-source");
+  root.setAttribute("aria-hidden", "true");
+  root.setAttribute("inert", "");
+  root.style.pointerEvents = "none";
 }
 
-function showHoldingPage(page) {
-  const holdingPage = document.createElement("div");
-  holdingPage.className = "day-flipbook__holding";
-  holdingPage.setAttribute("aria-hidden", "true");
-  holdingPage.setAttribute("inert", "");
-  holdingPage.append(page);
-  book.value.replaceChildren(holdingPage);
-  phase.value = "holding";
-  overlayVisible.value = true;
+function hydrateTemporaryCopy(position) {
+  const enginePage = pageFlip?.getPage?.(position);
+  const source = enginePage?.getElement?.() ?? sourcePageAt(position);
+  if (!source || !book.value) return;
+  const hydrate = () => {
+    const temporaryCopy = enginePage?.getTemporaryCopy?.()?.getElement?.();
+    if (!temporaryCopy) return false;
+    copyLiveDomState(source, temporaryCopy);
+    neutralizeTemporaryCopy(temporaryCopy);
+    return true;
+  };
+  if (!hydrate()) globalThis.requestAnimationFrame?.(hydrate);
 }
 
-function cleanupBook() {
-  finishActiveTurn = null;
-  if (flipbookEngine && flipbookEventHandler) {
-    flipbookEngine.off("flip", flipbookEventHandler);
+async function loadPageFlip() {
+  if (!pageFlipModulePromise) {
+    pageFlipModulePromise = import("page-flip").then((module) => module.PageFlip);
   }
-  flipbookEventHandler = null;
-  if (flipbookEngine) {
-    try {
-      flipbookEngine.destroy();
-    } catch {
-      // The transient engine may already have completed its own teardown.
+  return pageFlipModulePromise;
+}
+
+function installRenderGuards(engine) {
+  const render = engine?.getRender?.();
+  const originalClear = render?.clear;
+  const originalDrawFrame = render?.drawFrame;
+  if (!render || typeof originalDrawFrame !== "function") return;
+
+  if (typeof originalClear === "function") {
+    render.clear = function optimizedClear() {
+      const pages = engine.getPageCollection?.().getPages?.();
+      if (!Array.isArray(pages)) return originalClear.apply(this);
+      for (const page of pages) {
+        const visible = page === this.leftPage
+          || page === this.rightPage
+          || page === this.flippingPage
+          || page === this.bottomPage;
+        if (!visible) {
+          const element = page.getElement?.();
+          if (element && element.style.display !== "none") {
+            element.style.cssText = "display: none";
+          }
+        }
+        if (page.getTemporaryCopy?.() !== this.flippingPage) {
+          page.hideTemporaryCopy?.();
+        }
+      }
+    };
+  }
+
+  let remainingFrames = 3;
+  let wasAnimating = false;
+  render.drawFrame = function guardedDrawFrame(...args) {
+    const isAnimating = engine.getState?.() !== "read";
+    if (isAnimating) {
+      wasAnimating = true;
+      return originalDrawFrame.apply(this, args);
     }
-  }
-  flipbookEngine = null;
-  book.value?.removeAttribute("data-engine-ready");
-  book.value?.replaceChildren();
-  phase.value = "idle";
-  overlayVisible.value = false;
+    if (wasAnimating) {
+      wasAnimating = false;
+      remainingFrames = Math.max(remainingFrames, 2);
+    }
+    if (remainingFrames <= 0) return undefined;
+    remainingFrames -= 1;
+    return originalDrawFrame.apply(this, args);
+  };
+
+  requestEngineFrames = (count = 2) => {
+    remainingFrames = Math.max(remainingFrames, count);
+  };
 }
 
-function scheduleEnginePreload() {
-  cancelEnginePreload?.();
-  if (typeof globalThis.requestIdleCallback === "function") {
-    const handle = globalThis.requestIdleCallback(
-      () => void loadFlipbookEngine().catch(() => {}),
-      { timeout: 1200 },
+function clearPendingSettleFrame() {
+  globalThis.cancelAnimationFrame?.(pendingSettleFrame);
+  pendingSettleFrame = undefined;
+}
+
+function schedulePendingTurnSettle(error = null) {
+  const turn = pendingTurn;
+  if (!turn || turn.finishing) return;
+  if (error) turn.recoveryError = error;
+  if (pendingSettleFrame !== undefined) return;
+
+  pendingSettleFrame = globalThis.requestAnimationFrame?.(() => {
+    pendingSettleFrame = undefined;
+    if (pendingTurn !== turn || turn.finishing) return;
+    if (turn.recoveryError) {
+      void recoverPendingTurn(turn.recoveryError);
+      return;
+    }
+    if (!turn.targetReached || !turn.engineRead) return;
+    if (
+      pageFlip?.getState?.() !== "read"
+      || pageFlip?.getCurrentPageIndex?.() !== turn.targetPosition
+    ) {
+      void recoverPendingTurn(new Error("StPageFlip did not settle on the requested page"));
+      return;
+    }
+    void finishPendingTurn();
+  });
+}
+
+function handleEngineFlip(event) {
+  const pageIndex = Number(event?.data);
+  if (!pendingTurn || pendingTurn.finishing) return;
+  if (pageIndex !== pendingTurn.targetPosition) {
+    schedulePendingTurnSettle(
+      new Error(
+        `StPageFlip reached page ${pageIndex}, expected ${pendingTurn.targetPosition}`,
+      ),
     );
-    cancelEnginePreload = () => globalThis.cancelIdleCallback?.(handle);
     return;
   }
-  const handle = globalThis.setTimeout?.(() => void loadFlipbookEngine().catch(() => {}), 0);
-  cancelEnginePreload = () => globalThis.clearTimeout?.(handle);
+  pendingTurn.targetReached = true;
+  schedulePendingTurnSettle();
 }
 
-watch(
-  () => props.enabled,
-  (enabled) => {
-    if (enabled) scheduleEnginePreload();
-    else cancelEnginePreload?.();
-  },
-  { immediate: true },
-);
+function handleEngineState(event) {
+  if (!pendingTurn || pendingTurn.finishing || event?.data !== "read") return;
+  pendingTurn.engineRead = true;
+  schedulePendingTurnSettle();
+}
 
-async function turn(direction, commitNavigation) {
+function syncPortraitGeometry(width, height) {
+  if (!pageFlip) return;
+  const safeWidth = Math.max(1, Math.round(width));
+  const safeHeight = Math.max(320, Math.round(height));
+  const settings = pageFlip.getSettings?.();
+  if (settings) {
+    settings.width = safeWidth;
+    settings.height = safeHeight;
+    // page-flip switches to two-page landscape when blockWidth >= minWidth * 2.
+    // A Day is one physical page, so keep the threshold just above half the
+    // current host width and update it before every layout recalculation.
+    settings.minWidth = Math.floor(safeWidth / 2) + 1;
+    settings.maxWidth = Math.max(settings.maxWidth || 0, safeWidth);
+    settings.maxHeight = Math.max(settings.maxHeight || 0, safeHeight);
+  }
+  if (book.value) book.value.style.minWidth = "0px";
+}
+
+async function ensureEngine() {
+  if (pageFlip || !props.enabled || !props.active || destroyed) return pageFlip;
+  if (ensureEnginePromise) return ensureEnginePromise;
+
+  bookMounted.value = true;
+  engineUnavailable.value = false;
+
+  ensureEnginePromise = (async () => {
+    try {
+      await nextTick();
+      const PageFlip = await loadPageFlip();
+      await nextTick();
+      if (destroyed || !book.value || !props.enabled || !props.active) return null;
+
+      const width = Math.max(1, Math.round(host.value?.clientWidth ?? 0));
+      const height = Math.max(320, Math.round(host.value?.clientHeight ?? 0));
+      const pages = book.value.querySelectorAll("[data-day-flipbook-source]");
+      const startPage = Math.max(0, positionForDate(props.selectedDate));
+      if (!width || pages.length !== pageEntries.value.length || !pages.length) {
+        throw new Error("StPageFlip pages are not ready");
+      }
+
+      pageFlip = new PageFlip(book.value, {
+        width,
+        height,
+        size: "stretch",
+        minWidth: Math.floor(width / 2) + 1,
+        maxWidth: Math.max(2048, width),
+        minHeight: 320,
+        maxHeight: Math.max(2048, height),
+        autoSize: false,
+        flippingTime: Math.max(120, Number(props.duration) || 850),
+        maxShadowOpacity: 0.4,
+        drawShadow: true,
+        usePortrait: true,
+        showCover: false,
+        useMouseEvents: false,
+        mobileScrollSupport: false,
+        showPageCorners: false,
+        // Built-in pointer handlers are disabled. Keeping this false also avoids
+        // page-flip@2.0.7 rejecting programmatic flipPrev() in portrait mode.
+        disableFlipByClick: false,
+        startPage,
+      });
+      pageFlip.loadFromHTML(pages);
+      // useMouseEvents=false leaves only page-flip's global resize listener.
+      // ResizeObserver below owns layout updates so geometry is synchronized
+      // before the engine can reconsider its orientation.
+      pageFlip.getUI?.().removeHandlers?.();
+      syncPortraitGeometry(width, height);
+      pageFlip.update();
+      installRenderGuards(pageFlip);
+      requestEngineFrames(3);
+      pageFlip.on("flip", handleEngineFlip);
+      pageFlip.on("changeState", handleEngineState);
+      engineReady.value = true;
+      engineInstanceId.value += 1;
+      book.value.dataset.engineReady = "true";
+      lastWidth = host.value?.clientWidth ?? width;
+      lastHeight = host.value?.clientHeight ?? height;
+      return pageFlip;
+    } catch (error) {
+      engineUnavailable.value = true;
+      engineReady.value = false;
+      emit("animation-error", error);
+      return null;
+    } finally {
+      ensureEnginePromise = null;
+    }
+  })();
+
+  return ensureEnginePromise;
+}
+
+function clearFallbackTimer() {
+  globalThis.clearTimeout?.(fallbackTimer);
+  fallbackTimer = undefined;
+}
+
+function finishEngineAnimation() {
+  if (!pageFlip) return;
+  requestEngineFrames(3);
+  try {
+    pageFlip.getRender?.().finishAnimation?.();
+  } catch {
+    // A half-created animation is realigned by alignEngineToDate below.
+  }
+}
+
+function alignEngineToDate(date, { update = false } = {}) {
+  if (!pageFlip) return false;
+  const position = positionForDate(date);
+  if (position < 0) return false;
+  requestEngineFrames(3);
+  if (update && props.active && props.enabled) {
+    syncPortraitGeometry(
+      host.value?.clientWidth ?? lastWidth,
+      host.value?.clientHeight ?? lastHeight,
+    );
+    pageFlip.update();
+  }
+  pageFlip.turnToPage(position);
+  scrollPageToTop(position);
+  return true;
+}
+
+function cancelPendingTurn() {
+  const turn = pendingTurn;
+  transitionEpoch += 1;
+  pendingTurn = null;
+  clearFallbackTimer();
+  clearPendingSettleFrame();
+  finishEngineAnimation();
+  alignEngineToDate(props.selectedDate);
+  phase.value = "idle";
+  setBusy(false);
+  turn?.resolve(false);
+  return transitionEpoch;
+}
+
+async function commitWithoutAnimation(targetDate, commitNavigation, token = ++transitionEpoch) {
+  internalCommitDate = targetDate;
+  try {
+    await commitNavigation();
+    if (token !== transitionEpoch) return false;
+    await nextTick();
+    alignEngineToDate(targetDate);
+    return true;
+  } catch (error) {
+    if (token === transitionEpoch) alignEngineToDate(props.selectedDate);
+    throw error;
+  } finally {
+    if (internalCommitDate === targetDate) internalCommitDate = null;
+  }
+}
+
+async function recoverPendingTurn(error) {
+  const turn = pendingTurn;
+  if (!turn || turn.finishing) return;
+  turn.finishing = true;
+  clearFallbackTimer();
+  clearPendingSettleFrame();
+  emit("animation-error", error);
+  finishEngineAnimation();
+  if (pageFlip?.getCurrentPageIndex?.() !== turn.targetPosition) {
+    requestEngineFrames(3);
+    pageFlip?.turnToPage?.(turn.targetPosition);
+  }
+  phase.value = "committing";
+  internalCommitDate = turn.targetDate;
+  try {
+    await turn.commitNavigation();
+    if (turn.token !== transitionEpoch || pendingTurn !== turn) return;
+    await nextTick();
+    alignEngineToDate(turn.targetDate);
+    turn.resolve(true);
+  } catch (commitError) {
+    if (turn.token === transitionEpoch) {
+      alignEngineToDate(props.selectedDate);
+      turn.reject(commitError);
+    }
+  } finally {
+    if (internalCommitDate === turn.targetDate) internalCommitDate = null;
+    if (pendingTurn === turn) pendingTurn = null;
+    if (turn.token === transitionEpoch) {
+      phase.value = "idle";
+      setBusy(false);
+    }
+  }
+}
+
+async function finishPendingTurn() {
+  const turn = pendingTurn;
+  if (!turn || turn.finishing) return;
+  turn.finishing = true;
+  clearFallbackTimer();
+  clearPendingSettleFrame();
+  phase.value = "committing";
+  internalCommitDate = turn.targetDate;
+  try {
+    await turn.commitNavigation();
+    if (turn.token !== transitionEpoch || pendingTurn !== turn) return;
+    await nextTick();
+    alignEngineToDate(turn.targetDate);
+    turn.resolve(true);
+  } catch (error) {
+    if (turn.token === transitionEpoch) {
+      alignEngineToDate(props.selectedDate);
+      turn.reject(error);
+    }
+  } finally {
+    if (internalCommitDate === turn.targetDate) internalCommitDate = null;
+    if (pendingTurn === turn) pendingTurn = null;
+    if (turn.token === transitionEpoch) {
+      phase.value = "idle";
+      setBusy(false);
+    }
+  }
+}
+
+async function turn(direction, targetDate, commitNavigation) {
   if (typeof commitNavigation !== "function") {
     throw new TypeError("commitNavigation must be a function");
   }
   if (busy.value) return false;
 
+  const token = ++transitionEpoch;
   setBusy(true);
   try {
     if (!props.enabled || prefersReducedMotion()) {
-      await commitNavigation();
-      return true;
+      return await commitWithoutAnimation(targetDate, commitNavigation, token);
     }
 
-    const currentPage = host.value?.querySelector?.(".day-page");
-    if (!currentPage || !book.value || !host.value) {
-      await commitNavigation();
-      return true;
+    const engine = await ensureEngine();
+    if (token !== transitionEpoch || !props.active) return false;
+    if (!engine || engineUnavailable.value) {
+      return await commitWithoutAnimation(targetDate, commitNavigation, token);
     }
 
-    const previousPage = wrapSnapshot(createSnapshot(currentPage));
-    cancelEnginePreload?.();
-    const engineResultPromise = loadFlipbookEngine().then(
-      (createFlipbook) => ({ createFlipbook, error: null }),
-      (error) => ({ createFlipbook: null, error }),
+    const currentWidth = Math.max(1, Math.round(host.value?.clientWidth ?? 0));
+    const currentHeight = Math.max(320, Math.round(host.value?.clientHeight ?? 0));
+    if (
+      engine.getOrientation?.() !== "portrait"
+      || Math.abs(currentWidth - lastWidth) >= 8
+      || Math.abs(currentHeight - lastHeight) >= 8
+    ) {
+      syncPortraitGeometry(currentWidth, currentHeight);
+      requestEngineFrames(3);
+      engine.update();
+      lastWidth = currentWidth;
+      lastHeight = currentHeight;
+      layoutDirty = false;
+      alignEngineToDate(props.selectedDate);
+    }
+    if (engine.getOrientation?.() !== "portrait") {
+      const error = new Error("StPageFlip could not preserve single-page portrait mode");
+      emit("animation-error", error);
+      return await commitWithoutAnimation(targetDate, commitNavigation, token);
+    }
+
+    const sourcePosition = positionForDate(props.selectedDate);
+    const targetPosition = positionForDate(targetDate);
+    const expectedTarget = sourcePosition + (direction === "previous" ? -1 : 1);
+    if (sourcePosition < 0 || targetPosition !== expectedTarget) {
+      throw new RangeError(`target date is not adjacent to the current page: ${targetDate}`);
+    }
+
+    if (engine.getCurrentPageIndex() !== sourcePosition) {
+      alignEngineToDate(props.selectedDate);
+    }
+    scrollPageToTop(targetPosition);
+    phase.value = "animating";
+
+    const result = new Promise((resolve, reject) => {
+      pendingTurn = {
+        token,
+        targetDate,
+        targetPosition,
+        commitNavigation,
+        resolve,
+        reject,
+        finishing: false,
+        targetReached: false,
+        engineRead: false,
+        recoveryError: null,
+      };
+    });
+    fallbackTimer = globalThis.setTimeout?.(
+      () => void recoverPendingTurn(new Error("StPageFlip completion event timed out")),
+      Math.max(120, Number(props.duration) || 850) + 1200,
     );
 
-    // Freeze the source page before changing selectedDate. Vue flushes the
-    // hidden live page only after the old snapshot is already visible.
-    showHoldingPage(previousPage);
-    await nextTick();
-    restoreSnapshotScrollPositions();
-
-    await commitNavigation();
-    await nextTick();
-
-    const nextPage = host.value?.querySelector?.(".day-page");
-    if (destroyed || !props.enabled || !nextPage || !book.value || !host.value) return true;
-
-    const { createFlipbook, error: engineError } = await engineResultPromise;
-    if (engineError || !createFlipbook) {
-      emit("animation-error", engineError ?? new Error("Strata Flipbook failed to load"));
-      return true;
-    }
-    if (destroyed || !book.value || !host.value) return true;
-
-    const destinationPage = wrapSnapshot(createSnapshot(nextPage));
-    const ordered = orderFlipbookPages(direction, previousPage, destinationPage);
-    const pages = ordered.pages;
-    const engineHost = document.createElement("div");
-    engineHost.className = "strata-flipbook-engine";
-    engineHost.dataset.flipbookEngine = "strata";
-    engineHost.style.setProperty("--st-flip-duration", `${Math.max(120, props.duration)}ms`);
-    engineHost.style.setProperty("--st-flip-easing", "cubic-bezier(0.4, 0, 0.2, 1)");
-    engineHost.style.setProperty("--st-flip-skew-k", "0deg");
-
-    await new Promise((resolve, reject) => {
-      let targetRequested = false;
-      let settled = false;
-      let fallbackTimer;
-      let startFrame;
-
-      const finish = () => {
-        if (settled) return;
-        settled = true;
-        globalThis.clearTimeout?.(fallbackTimer);
-        globalThis.cancelAnimationFrame?.(startFrame);
-        cleanupBook();
-        resolve();
-      };
-      finishActiveTurn = finish;
-
-      try {
-        flipbookEngine = createFlipbook(engineHost, {
-          source: "html",
-          content: pages,
-          preset: "minimal",
-          pagination: "none",
-          drag: false,
-          loop: false,
-          closed: true,
-          sound: { enabled: false },
-        });
-        if (!flipbookEngine) throw new Error("Strata Flipbook initialization failed");
-        flipbookEventHandler = (event) => {
-          if (
-            targetRequested
-            && event.detail?.flipbook === flipbookEngine
-            && event.detail?.spread === ordered.targetSpread
-          ) {
-            if (globalThis.queueMicrotask) globalThis.queueMicrotask(finish);
-            else globalThis.setTimeout?.(finish, 0);
-          }
-        };
-        flipbookEngine.on("flip", flipbookEventHandler);
-        if (ordered.startSpread !== 0) flipbookEngine.goTo(ordered.startSpread);
-
-        // The detached engine is fully populated before it replaces the hold
-        // layer, making the visual swap atomic instead of exposing a blank scene.
-        book.value.replaceChildren(engineHost);
-        restoreSnapshotScrollPositions();
-        book.value.dataset.engineReady = "true";
-        phase.value = "preparing";
-
-        const startAnimation = () => {
-          startFrame = undefined;
-          if (settled || destroyed || !flipbookEngine) return;
-          phase.value = "animating";
-          targetRequested = true;
-          try {
-            if (direction === "previous") flipbookEngine.prev();
-            else flipbookEngine.next();
-            revealDestinationUnderlay(engineHost, direction, pages[ordered.targetSpread]);
-            restoreSnapshotScrollPositions();
-          } catch (error) {
-            globalThis.clearTimeout?.(fallbackTimer);
-            reject(error);
-            return;
-          }
-        };
-
-        fallbackTimer = globalThis.setTimeout?.(finish, Math.max(120, props.duration) + 1200);
-        if (typeof globalThis.requestAnimationFrame === "function") {
-          startFrame = globalThis.requestAnimationFrame(startAnimation);
-        } else {
-          startAnimation();
+    try {
+      if (direction === "previous") engine.flipPrev();
+      else engine.flipNext();
+      hydrateTemporaryCopy(sourcePosition);
+      globalThis.requestAnimationFrame?.(() => {
+        if (pendingTurn?.token !== token || pendingTurn.finishing) return;
+        if (
+          engine.getState?.() === "read"
+          && engine.getCurrentPageIndex?.() !== targetPosition
+        ) {
+          schedulePendingTurnSettle(new Error("StPageFlip animation did not start"));
         }
-      } catch (error) {
-        reject(error);
-      }
-    }).catch((error) => {
-      cleanupBook();
-      emit("animation-error", error);
-    });
-    return true;
+      });
+    } catch (error) {
+      schedulePendingTurnSettle(error);
+    }
+    return await result;
   } finally {
-    cleanupBook();
-    setBusy(false);
+    if (!pendingTurn && phase.value !== "committing") {
+      phase.value = "idle";
+      setBusy(false);
+    }
   }
 }
 
+function beginSwipe(clientX, clientY, target, pointerType = "touch", button = 0) {
+  if (!props.active || busy.value || (pointerType === "mouse" && button !== 0)) return;
+  const element = target instanceof Element ? target : null;
+  const editable = element?.closest?.("input, textarea, [contenteditable]") ?? null;
+  if (editable && editable === document.activeElement) return;
+  swipeActive = true;
+  swipeStartX = clientX;
+  swipeStartY = clientY;
+  swipeStartedOnControl = Boolean(editable || element?.closest?.("button, a, select"));
+}
+
+function continueSwipe(clientX, clientY) {
+  if (!swipeActive || busy.value) return;
+  const deltaX = clientX - swipeStartX;
+  const deltaY = clientY - swipeStartY;
+  if (Math.abs(deltaX) < 26 || Math.abs(deltaX) < Math.abs(deltaY) * 1.2) return;
+  swipeActive = false;
+  const now = Date.now();
+  if (swipeStartedOnControl) suppressClickUntil = now + 500;
+  const focused = document.activeElement;
+  if (focused instanceof HTMLElement && focused.closest("input, textarea, [contenteditable]")) {
+    focused.blur();
+  }
+  emit("navigate", deltaX < 0 ? 1 : -1);
+}
+
+function handlePointerDown(event) {
+  beginSwipe(event.clientX, event.clientY, event.target, event.pointerType, event.button);
+}
+
+function handlePointerMove(event) {
+  if (event.pointerType === "mouse" && event.buttons === 0) {
+    swipeActive = false;
+    return;
+  }
+  continueSwipe(event.clientX, event.clientY);
+}
+
+function handleTouchStart(event) {
+  if (event.touches.length !== 1) return;
+  const touch = event.touches[0];
+  beginSwipe(touch.clientX, touch.clientY, event.target);
+}
+
+function handleTouchMove(event) {
+  if (event.touches.length !== 1) {
+    swipeActive = false;
+    return;
+  }
+  continueSwipe(event.touches[0].clientX, event.touches[0].clientY);
+}
+
+function endSwipe() {
+  swipeActive = false;
+}
+
+function handleClickCapture(event) {
+  if (Date.now() >= suppressClickUntil) return;
+  event.preventDefault();
+  event.stopPropagation();
+}
+
+function applyEngineLayout() {
+  if (!pageFlip || !props.active || busy.value || destroyed) {
+    layoutDirty ||= Boolean(pageFlip && props.active && busy.value);
+    return;
+  }
+  const width = host.value?.clientWidth ?? 0;
+  const height = host.value?.clientHeight ?? 0;
+  if (!width || !height) return;
+  lastWidth = width;
+  lastHeight = height;
+  layoutDirty = false;
+  syncPortraitGeometry(width, height);
+  requestEngineFrames(3);
+  pageFlip.update();
+  alignEngineToDate(props.selectedDate);
+}
+
+function flushDeferredLayout() {
+  if (!layoutDirty || busy.value || destroyed) return;
+  globalThis.clearTimeout?.(resizeTimer);
+  resizeTimer = globalThis.setTimeout?.(() => {
+    applyEngineLayout();
+  }, 0);
+}
+
+function refreshEngineLayout() {
+  if (!pageFlip || !props.active) return;
+  const width = host.value?.clientWidth ?? 0;
+  const height = host.value?.clientHeight ?? 0;
+  if (Math.abs(width - lastWidth) < 8 && Math.abs(height - lastHeight) < 8) return;
+  if (busy.value) {
+    layoutDirty = true;
+    return;
+  }
+  globalThis.clearTimeout?.(resizeTimer);
+  resizeTimer = globalThis.setTimeout?.(applyEngineLayout, 80);
+}
+
+watch(
+  () => props.selectedDate,
+  (date) => {
+    if (internalCommitDate === date) return;
+    const token = cancelPendingTurn();
+    void nextTick().then(() => {
+      if (token === transitionEpoch) alignEngineToDate(date);
+    });
+  },
+);
+
+watch(
+  () => [props.enabled, props.active],
+  ([enabled, active]) => {
+    if (!enabled || !active) {
+      if (busy.value || phase.value !== "idle") cancelPendingTurn();
+      return;
+    }
+    bookMounted.value = true;
+    void nextTick().then(async () => {
+      const engine = await ensureEngine();
+      if (!engine) return;
+      await nextTick();
+      alignEngineToDate(props.selectedDate, { update: true });
+    });
+  },
+);
+
+onMounted(() => {
+  window.addEventListener("pointerup", endSwipe);
+  window.addEventListener("touchend", endSwipe);
+  window.addEventListener("touchcancel", endSwipe);
+  resizeObserver = new ResizeObserver(refreshEngineLayout);
+  if (host.value) resizeObserver.observe(host.value);
+  if (props.enabled && props.active) void ensureEngine();
+});
+
 onBeforeUnmount(() => {
   destroyed = true;
-  cancelEnginePreload?.();
-  finishActiveTurn?.();
-  cleanupBook();
+  clearFallbackTimer();
+  clearPendingSettleFrame();
+  globalThis.clearTimeout?.(resizeTimer);
+  resizeObserver?.disconnect();
+  window.removeEventListener("pointerup", endSwipe);
+  window.removeEventListener("touchend", endSwipe);
+  window.removeEventListener("touchcancel", endSwipe);
+  if (pendingTurn) {
+    pendingTurn.resolve(false);
+    pendingTurn = null;
+  }
+  if (pageFlip) {
+    pageFlip.off("flip");
+    pageFlip.off("changeState");
+    try {
+      finishEngineAnimation();
+      const render = pageFlip.getRender?.();
+      if (render) {
+        render.drawFrame = () => {};
+        render.render = () => {};
+      }
+      pageFlip.getUI?.().removeHandlers?.();
+      pageFlip.destroy();
+    } catch {
+      // The document may already be tearing down.
+    }
+  }
+  pageFlip = null;
+  requestEngineFrames = () => {};
   setBusy(false);
 });
 
-defineExpose({ turn });
+defineExpose({
+  cancelPendingTurn,
+  turn,
+  scrollCurrentToTop: scrollPageToTop,
+});
 </script>
 
 <template>
   <div
     ref="host"
     class="day-flipbook"
-    :class="{ 'day-flipbook--turning': overlayVisible }"
+    :class="{ 'day-flipbook--turning': busy }"
     :data-page-transition="enabled ? 'flipbook' : 'classic'"
     :data-flipbook-phase="phase"
+    :data-engine-instance="engineInstanceId || undefined"
     :aria-busy="busy"
+    @click.capture="handleClickCapture"
+    @pointerdown="handlePointerDown"
+    @pointermove="handlePointerMove"
+    @touchstart.passive="handleTouchStart"
+    @touchmove.passive="handleTouchMove"
   >
-    <div class="day-flipbook__live" :inert="overlayVisible || undefined">
-      <slot />
+    <div v-if="!enabled || engineUnavailable" class="day-flipbook__classic">
+      <slot :date="selectedDate" :active="active" />
     </div>
+
     <div
-      v-show="overlayVisible"
-      class="day-flipbook__overlay"
-      aria-hidden="true"
+      v-if="bookMounted"
+      v-show="enabled && !engineUnavailable"
+      ref="book"
+      class="stpageflip-book"
+      data-flipbook-engine="stpageflip"
+      :data-engine-ready="engineReady"
+      :data-page-count="pageEntries.length"
+      :aria-hidden="!active || !enabled"
+      :inert="!active || !enabled || undefined"
     >
-      <div ref="book" class="strata-flipbook" data-flipbook-engine="strata" />
+      <div
+        v-for="entry in pageEntries"
+        :key="entry.date"
+        class="day-flipbook-page paper-surface"
+        data-day-flipbook-source
+        data-density="soft"
+        :data-page-position="entry.position"
+        :data-page-date="entry.date"
+        :aria-hidden="!active || !enabled || entry.date !== selectedDate"
+        :inert="!active || !enabled || entry.date !== selectedDate || undefined"
+      >
+        <slot
+          v-if="enabled && !engineUnavailable"
+          :date="entry.date"
+          :active="active && enabled && entry.date === selectedDate"
+        />
+      </div>
     </div>
   </div>
 </template>
 
 <style scoped>
 .day-flipbook,
-.day-flipbook__live,
-.day-flipbook__overlay,
-.strata-flipbook {
+.day-flipbook__classic,
+.stpageflip-book {
   height: 100%;
   inset: 0;
   position: absolute;
   width: 100%;
 }
 
-.day-flipbook--turning .day-flipbook__live {
-  visibility: hidden;
+.day-flipbook__classic {
+  z-index: 1;
 }
 
-.day-flipbook__overlay {
-  overflow: hidden;
+.day-flipbook--turning {
   pointer-events: none;
-  z-index: 4;
 }
 
-.strata-flipbook {
+.stpageflip-book {
   background: rgb(var(--v-theme-background));
   contain: layout paint;
   isolation: isolate;
+  overflow: hidden;
+  z-index: 2;
 }
 
-.strata-flipbook :deep(.day-flipbook__holding) {
-  background: rgb(var(--v-theme-background));
+.stpageflip-book:not([data-engine-ready="true"]) > .day-flipbook-page {
+  display: none;
+}
+
+.stpageflip-book:not([data-engine-ready="true"])
+  > .day-flipbook-page[aria-hidden="false"] {
+  display: block;
   height: 100%;
   inset: 0;
-  overflow: hidden;
   position: absolute;
   width: 100%;
 }
 
-.strata-flipbook :deep(.strata-flipbook-engine),
-.strata-flipbook :deep(.st-flipbook-scene),
-.strata-flipbook :deep(.st-flipbook-book) {
-  height: 100%;
-  max-width: none;
-  width: 100%;
-}
-
-.strata-flipbook :deep(.st-flipbook[data-st-flip-open="true"] .st-flipbook-scene) {
-  animation: none !important;
-  opacity: 1;
-}
-
-.strata-flipbook :deep(.st-flipbook-book) {
-  box-shadow: none;
-  padding-bottom: 0 !important;
-  transform: none !important;
-}
-
-.strata-flipbook :deep(.st-flipbook-page-left) {
-  display: none;
-}
-
-.strata-flipbook :deep(.st-flipbook-page-right) {
-  border-left: 0;
-  left: 0;
-  width: 100%;
-}
-
-.strata-flipbook :deep(.strata-flipbook-engine[data-st-flip-solo="left"] .st-flipbook-page-left) {
-  border-right: 0;
-  display: block;
-  left: 0;
-  width: 100%;
-}
-
-.strata-flipbook :deep(.strata-flipbook-engine[data-st-flip-solo="left"] .st-flipbook-page-right) {
-  display: none;
-}
-
-.strata-flipbook :deep(.st-flipbook-flip-page) {
-  left: 0;
-  width: 100%;
-}
-
-.strata-flipbook :deep(.st-flipbook-flip-front),
-.strata-flipbook :deep(.st-flipbook-flip-back) {
-  clip-path: none !important;
-}
-
-.strata-flipbook :deep(.st-flipbook-flip-page::after) {
-  display: none;
-}
-
-.strata-flipbook :deep([data-st-flip-direction="forward"] .st-flipbook-flip-page) {
-  transform-origin: left center;
-}
-
-.strata-flipbook :deep([data-st-flip-direction="backward"] .st-flipbook-flip-page) {
-  transform-origin: right center;
-}
-
-.strata-flipbook :deep(.day-flipbook-page) {
-  background-color: rgb(var(--v-theme-background));
-  height: 100%;
+.day-flipbook-page {
+  background: rgb(var(--v-theme-background));
+  box-shadow: inset 0 0 0 1px rgba(var(--v-theme-outline), 0.14);
   overflow: hidden;
-  width: 100%;
 }
 
-.strata-flipbook :deep(.day-flipbook-page *) {
+.day-flipbook-page[aria-hidden="true"] {
+  pointer-events: none;
+}
+
+.day-flipbook-page[aria-hidden="true"] :deep(*) {
   animation: none !important;
-  caret-color: transparent !important;
   transition: none !important;
 }
 
-.strata-flipbook :deep(.day-page) {
+.day-flipbook-page :deep(.day-page) {
+  height: 100%;
+  width: 100%;
+}
+
+.stpageflip-book :deep(.stf__wrapper),
+.stpageflip-book :deep(.stf__block) {
   height: 100%;
   width: 100%;
 }

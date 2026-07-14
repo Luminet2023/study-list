@@ -2,6 +2,10 @@
 import { onBeforeUnmount, ref, watch } from "vue";
 
 const props = defineProps({
+  active: {
+    type: Boolean,
+    default: true,
+  },
   meta: {
     type: Object,
     required: true,
@@ -63,7 +67,7 @@ function revealQuote() {
     displayedQuote.value = "";
     return;
   }
-  if (!props.typewriter || !quote || prefersReducedMotion()) {
+  if (!props.active || !props.typewriter || !quote || prefersReducedMotion()) {
     displayedQuote.value = quote;
     return;
   }
@@ -84,7 +88,7 @@ function revealQuote() {
 }
 
 watch(
-  () => [props.quote, props.quoteLoading, props.typewriter],
+  () => [props.active, props.quote, props.quoteLoading, props.typewriter],
   revealQuote,
   { immediate: true },
 );
@@ -115,7 +119,7 @@ onBeforeUnmount(stopTyping);
     </div>
 
     <div class="blessing-wrap">
-      <span class="d-sr-only" aria-live="polite">
+      <span v-if="active" class="d-sr-only" aria-live="polite">
         {{ quoteLoading ? "正在获取今日赠语" : quote }}
       </span>
 

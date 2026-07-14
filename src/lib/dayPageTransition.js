@@ -11,17 +11,12 @@ export function normalizeDayPageTransition(value) {
     : DAY_PAGE_TRANSITION.CLASSIC;
 }
 
-export function orderFlipbookPages(direction, previousPage, nextPage) {
-  if (direction === "previous") {
-    return {
-      pages: [nextPage, previousPage],
-      startSpread: 1,
-      targetSpread: 0,
-    };
-  }
-  return {
-    pages: [previousPage, nextPage],
-    startSpread: 0,
-    targetSpread: 1,
-  };
+export function createDayFlipbookPages(dates) {
+  return Array.isArray(dates)
+    ? dates.map((date, position) => ({ date, position }))
+    : [];
+}
+
+export function findDayFlipbookPosition(dates, date) {
+  return Array.isArray(dates) ? dates.indexOf(date) : -1;
 }

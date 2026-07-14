@@ -157,13 +157,6 @@ function confirmPaperClaim() {
   <VSheet class="raffle-view" color="transparent">
     <VToolbar class="raffle-toolbar" color="transparent" density="compact">
       <VToolbarTitle class="raffle-title">摸鱼大转盘</VToolbarTitle>
-      <VBtn
-        aria-label="查看规则说明"
-        icon="mdi-information-outline"
-        min-width="44"
-        variant="text"
-        @click="emit('rules')"
-      />
     </VToolbar>
 
     <main class="raffle-content">
@@ -313,7 +306,6 @@ function confirmPaperClaim() {
               <VIcon color="tertiary" icon="mdi-file-document-check-outline" size="26" />
             </template>
             <VListItemTitle id="paper-chance-heading">试卷额外机会</VListItemTitle>
-            <VListItemSubtitle>单日一次性完成 · 全假期最多 3 次</VListItemSubtitle>
             <template #append>
               <VChip label size="small" variant="outlined">
                 {{ paperClaimsUsed }} / 3
@@ -357,40 +349,6 @@ function confirmPaperClaim() {
             </VBtn>
           </VCardActions>
         </VCard>
-      </section>
-
-      <section class="probability-section" aria-label="抽奖概率">
-        <VExpansionPanels class="probability-panels" variant="accordion">
-          <VExpansionPanel elevation="0">
-            <VExpansionPanelTitle>
-              <div class="probability-title">
-                <VIcon icon="mdi-chart-donut" size="20" />
-                <span>查看概率与奖项</span>
-              </div>
-            </VExpansionPanelTitle>
-            <VExpansionPanelText>
-              <VList bg-color="transparent" density="compact">
-                <VListItem
-                  v-for="entry in probabilitySummary"
-                  :key="`${entry.label}-${entry.probability}`"
-                  :title="entry.label"
-                >
-                  <template #append>
-                    <VChip label size="small" variant="outlined">
-                      {{ entry.probability }}
-                    </VChip>
-                  </template>
-                </VListItem>
-                <VListItem v-if="!probabilitySummary.length" subtitle="奖项概率将在数据载入后显示">
-                  <template #prepend>
-                    <VIcon icon="mdi-information-outline" size="20" />
-                  </template>
-                </VListItem>
-              </VList>
-              <p class="probability-note">未中概率为全部奖项概率扣除后的剩余概率。</p>
-            </VExpansionPanelText>
-          </VExpansionPanel>
-        </VExpansionPanels>
       </section>
       </div>
     </main>

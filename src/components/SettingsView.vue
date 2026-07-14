@@ -74,7 +74,7 @@ const dayPageTransitionOptions = [
   {
     value: "flipbook",
     label: "3D 翻书",
-    description: "使用现代 CSS 3D 引擎呈现纸张弯曲、阴影与真实翻书层次。",
+    description: "使用 StPageFlip 柔性纸页与动态阴影，一次常驻完整 48 个 Day。",
     icon: "mdi-book-open-page-variant-outline",
   },
 ];

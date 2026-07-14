@@ -2,6 +2,10 @@
 import { computed } from "vue";
 
 const props = defineProps({
+  active: {
+    type: Boolean,
+    default: true,
+  },
   stats: {
     type: Object,
     default: () => ({
@@ -25,6 +29,10 @@ const props = defineProps({
   showReturnAction: {
     type: Boolean,
     default: false,
+  },
+  titleId: {
+    type: String,
+    default: "week-stats-title",
   },
 });
 
@@ -64,7 +72,7 @@ const subjectMax = computed(() =>
 </script>
 
 <template>
-  <section class="week-stats-view" aria-labelledby="week-stats-title">
+  <section class="week-stats-view" :aria-labelledby="titleId">
     <v-toolbar color="transparent" density="compact">
       <v-btn
         icon="mdi-arrow-left"
@@ -72,7 +80,7 @@ const subjectMax = computed(() =>
         aria-label="返回"
         @click="emit('back')"
       />
-      <v-toolbar-title id="week-stats-title" class="view-title">
+      <v-toolbar-title :id="titleId" class="view-title">
         本周留痕
       </v-toolbar-title>
       <v-chip size="small" variant="outlined" color="primary">
@@ -91,7 +99,7 @@ const subjectMax = computed(() =>
       </v-btn>
     </div>
 
-    <v-fade-transition appear>
+    <v-fade-transition :appear="active">
       <div>
         <v-card class="completion-card mt-3" variant="outlined" elevation="0">
           <v-card-item>
@@ -134,7 +142,7 @@ const subjectMax = computed(() =>
             <v-card class="metric-card" variant="outlined" elevation="0">
               <v-card-text>
                 <div class="metric-value">{{ numberValue("diaryChars") }}</div>
-                <div class="metric-label">日结 / 日记字数</div>
+                <div class="metric-label">日记字数</div>
               </v-card-text>
             </v-card>
           </v-col>
