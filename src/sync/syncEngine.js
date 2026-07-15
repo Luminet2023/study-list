@@ -715,8 +715,11 @@ async function resolveBaseline(choice) {
       nextState = resolved.state;
     } else {
       nextState = clone(store.mutableState);
+      nextState.baselineId = response.baselineId;
       nextMeta.baseline = recordsToSerializable(stateToRecords(nextState));
-      await saveCloudSyncState(ownerId, nextMeta, []);
+      const resolved = await replaceCampaignAndCloudSyncState(ownerId, nextState, nextMeta, []);
+      store.replaceFromPersistedSync(resolved.state);
+      nextState = resolved.state;
     }
     syncState = { meta: nextMeta, outbox: [] };
     observedSyncRecords = stateToRecords(store.mutableState);

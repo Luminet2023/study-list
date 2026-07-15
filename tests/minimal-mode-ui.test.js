@@ -30,6 +30,9 @@ test("minimal mode hides statistics and cloud surfaces without gating sync start
   assert.match(app, /if \(user\) await startAuthenticatedSync\(user\)/u);
   assert.match(dayPage, /page\.dayType !== 'sunday' && !minimalMode/u);
   assert.match(editor, /<v-tooltip\s+v-if="!minimalMode"/u);
+  assert.match(editor, /v-if="!minimalMode" class="editor-mode-row"/u);
+  assert.match(editor, /v-if="!minimalMode"\s+class="markdown-toolbar"/u);
+  assert.match(editor, /v-show="minimalMode \|\| mode === 'edit'"/u);
 });
 
 test("minimal mode hides the drawer brand, divider, and logged-out login action", async () => {

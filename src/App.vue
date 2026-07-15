@@ -1726,7 +1726,7 @@ onMounted(async () => {
               title="日记"
               :subtitle="minimalMode
                 ? '极简模式下日记可随时书写，内容会自动保存在本地。'
-                : '当日有效目标均标记为完成或未完成后解锁，内容会自动保存在本地。'"
+                : '当日有效目标均标记为完成或未完成后解锁，内容支持 Markdown，并自动保存在本地。'"
             />
             <v-list-item
               prepend-icon="mdi-calendar-weekend-outline"

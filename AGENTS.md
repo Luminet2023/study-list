@@ -9,6 +9,7 @@ When implementing from a selected generated mock, treat that image as the source
 ## Locked product direction
 
 - 页面统一使用主题纯色背景，不再使用宣纸、水彩、笔刷或转盘插画背景；保留 oversized date、居中祝语与细线学习路径等排版语言。
+- 学习目标状态固定按 `待完成 → 已完成 → 未完成警报 → 待完成` 三态循环；第三次点击必须回到待完成，不得直接跳回已完成。
 - The app is mobile-first at 390 x 844 and must remain usable at 360 and 430 CSS pixels without horizontal scrolling.
 - Use Vue 3 + Vuetify 3 with the `md3` blueprint. Prefer Vuetify components, including Labs `VStepperVertical`, stable `VSnackbarQueue`, and `VFadeTransition`.
 - Do not use `VSnackbar`; user feedback belongs in the queue component.
@@ -26,5 +27,5 @@ When implementing from a selected generated mock, treat that image as the source
 - 应用以 PWA 方式提供安装与离线启动：构建期生成带内容版本号的 Service Worker 预缓存清单，静态页面与资源可缓存，但同源开发路径 `/v1/` 与退役路径 `/api/` 必须始终绕过 Service Worker，生产 API 跨源直连 `https://api.luminet.cn/hifumi/`，避免 OAuth、Session 和同步响应进入 Cache Storage。2026-07-15 发布使用固定迁移标记 `force-refresh-2026-07-15-v1`，仅对已有旧 Service Worker 的每个浏览器 Origin 强制接管并刷新一次；首次安装和已记录客户端不得重复强刷，未来版本不得更换该标记。PWA 图标沿用暖色宣纸、深梅色笔尖与朱红印记的视觉语言，并保留 maskable 安全区。
 - 生产前端同时发布在 `https://stellafortuna.hifumi.luminet.cn/` 与 `https://stellafortuna.luminet.cn/`；所有 API 请求使用 `credentials: "include"`，页面采用 `strict-origin-when-cross-origin` Referer 策略，服务端须精确校验这两个 Origin/Referer。
 - 日记编辑器为每个日期维护独立的 `journalDraft` 云草稿记录；输入后先进入本地批量保存与云同步队列，非极简模式下编辑器内提供云图标用于立即写入。极简模式仅隐藏该图标，自动保存逻辑保持不变。再次打开时优先恢复草稿，正式保存日记后清除对应草稿；草稿不得计入学习进度或日记统计。
-- 日记编辑器只提供纯文本输入，不提供格式工具栏、编辑/预览切换或编辑器内富文本预览；历史 Markdown 数据仍按原样保存并兼容现有只读展示。
+- 非极简模式的日记编辑器提供 Markdown 格式工具栏、编辑/预览切换与编辑器内渲染预览；极简模式必须隐藏这些 Markdown 功能并固定为纯文本输入。历史 Markdown 数据按原样保存并兼容现有只读展示。
 - 极简模式是仅保存在当前浏览器的默认 UI 模式，不新增云同步记录；只有用户在设置页明确关闭后才持续使用普通模式，重新从侧边栏开启时仍需确认。开启后侧边栏隐藏“极简模式”项目，退出入口只保留在设置页；同时隐藏侧边栏品牌标题区及其下方分隔线、侧边栏的本周/总统计入口、所有云同步状态组件、移动端云同步 FAB、日页“本周统计”按钮、日期标题中的 `seal-mark.png`、日视图两侧日期切换按钮、日记状态 Chip、日记编辑器云图标、月视图百分比 Chip 与所选日期详情卡片，以及赠语收藏页“轻触复制，让它陪你去往别处。”提示。极简模式下隐藏未登录态“通过 Linux DO 登录”按钮；已登录态的侧边栏底部账号/退出入口与后台同步照常保留。极简模式允许工作日日记随时填写，并完全移除目标锁定流程：不显示填写提示、锁定按钮或锁定状态，目标无需锁定即可勾选，且第 4、6、7 项保持可编辑。退出时必须解除所有未填写完整的历史工作日锁定，恢复普通模式校验。

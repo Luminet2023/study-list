@@ -127,7 +127,7 @@ const stateLabel = (item) => {
   const labels = {
     pending: "待完成，点击标记完成",
     completed: "已完成，点击标记未完成",
-    missed: "未完成警报，点击改为完成",
+    missed: "未完成警报，点击重置为待完成",
     exempt: "已由奖励免除，计为完成",
   };
 
@@ -285,7 +285,7 @@ const saveJournal = (value) => {
         role="button"
         :tabindex="journalUnlocked ? 0 : -1"
         :aria-disabled="!journalUnlocked"
-        aria-label="打开日记编辑器"
+        :aria-label="minimalMode ? '打开日记编辑器' : '打开 Markdown 日记编辑器'"
         @click="openJournal"
         @keydown.enter.prevent="openJournal"
         @keydown.space.prevent="openJournal"
@@ -310,7 +310,9 @@ const saveJournal = (value) => {
           <MarkdownContent
             v-if="journalUnlocked"
             :source="diary"
-            empty-text="点击这里，写下今天的日结或日记……"
+            :empty-text="minimalMode
+              ? '点击这里，写下今天的日结或日记……'
+              : '点击这里，用 Markdown 写下今天的日结或日记……'"
           />
           <p v-else class="diary-placeholder">
             {{ goalsLocked ? "请将每项目标标记为完成或未完成" : "先填写并锁定今日目标" }}

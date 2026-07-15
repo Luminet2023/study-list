@@ -3,17 +3,26 @@ import test from "node:test";
 
 import { createDefaultState } from "../src/domain/campaign.js";
 import {
+  BASELINE_CHOICE,
+  decodeResolveBaselineRequest,
   decodeSyncRequest,
   encodeJsonValue,
+  encodeResolveBaselineResponse,
   encodeSyncResponse,
 } from "../src/sync/protocol.js";
 import {
   decodeClientFrame,
   encodeServerResult,
 } from "../src/sync/webSocketFrames.js";
-import { startCloudSync, stopCloudSync } from "../src/sync/syncEngine.js";
+import {
+  resolveWithLocalProgress,
+  startCloudSync,
+  stopCloudSync,
+} from "../src/sync/syncEngine.js";
 
 const BASELINE_ID = "baseline_0123456789abcdef0123456789abcdef";
+const SERVER_BASELINE_ID = "baseline_abcdef0123456789abcdef0123456789";
+const FORKED_BASELINE_ID = "baseline_cccccccccccccccccccccccccccccccc";
 const REMOTE_JOURNAL_KEY = "stella/v1/day/2026-07-13/journal";
 
 class MemoryStorage {
@@ -161,7 +170,7 @@ function exchangeFrames(socket) {
     .filter((frame) => frame.type === "exchange");
 }
 
-function respondToExchange(socket, frame, changes = []) {
+function respondToExchange(socket, frame, changes = [], baselineId = BASELINE_ID) {
   const nextCursor = changes.at(-1)?.cursor ?? 0;
   socket.message(encodeServerResult(
     "exchange_result",
@@ -172,7 +181,7 @@ function respondToExchange(socket, frame, changes = []) {
       changes,
       hasMore: false,
       resetRequired: false,
-      baselineId: BASELINE_ID,
+      baselineId,
       serverVersion: nextCursor,
       serverUpdatedAtMs: nextCursor ? Date.now() : 0,
       serverProgressDay: "2026-07-13",
@@ -292,6 +301,113 @@ test("blur keeps one socket quiet, focus pulls once without uploading, and offli
     await nextTurn();
     assert.equal(socket.readyState, 3);
     assert.deepEqual(socket.closeCalls, [{ code: 1000, reason: "sync_paused" }]);
+  } finally {
+    stopCloudSync();
+    for (const [key, descriptor] of originalDescriptors) {
+      if (descriptor) Object.defineProperty(globalThis, key, descriptor);
+      else delete globalThis[key];
+    }
+  }
+});
+
+test("USE_LOCAL adopts a forked server baseline before the next exchange", async () => {
+  const originalDescriptors = new Map(
+    [
+      "document",
+      "navigator",
+      "localStorage",
+      "WebSocket",
+      "addEventListener",
+      "removeEventListener",
+      "setTimeout",
+      "clearTimeout",
+    ]
+      .map((key) => [key, Object.getOwnPropertyDescriptor(globalThis, key)]),
+  );
+  const windowEvents = new EventTarget();
+  const document = new EventTarget();
+  const timers = new FakeTimers();
+  Object.defineProperties(document, {
+    visibilityState: { configurable: true, value: "visible" },
+    hasFocus: { configurable: true, value: () => true },
+  });
+  Object.defineProperties(globalThis, {
+    document: { configurable: true, value: document },
+    navigator: { configurable: true, value: { onLine: true } },
+    localStorage: { configurable: true, value: new MemoryStorage() },
+    WebSocket: { configurable: true, value: FakeWebSocket },
+    addEventListener: {
+      configurable: true,
+      value: windowEvents.addEventListener.bind(windowEvents),
+    },
+    removeEventListener: {
+      configurable: true,
+      value: windowEvents.removeEventListener.bind(windowEvents),
+    },
+    setTimeout: { configurable: true, value: timers.setTimeout },
+    clearTimeout: { configurable: true, value: timers.clearTimeout },
+  });
+  FakeWebSocket.instances = [];
+
+  try {
+    const store = createStore();
+    await startCloudSync(store, "resolution-test-owner");
+    const socket = FakeWebSocket.instances[0];
+    socket.open();
+
+    const initialFrame = exchangeFrames(socket)[0];
+    socket.message(encodeServerResult(
+      "exchange_result",
+      initialFrame.requestId,
+      encodeSyncResponse({
+        nextCursor: 0,
+        acks: [],
+        changes: [],
+        hasMore: false,
+        resetRequired: false,
+        baselineId: SERVER_BASELINE_ID,
+        serverVersion: 3,
+        serverUpdatedAtMs: Date.now(),
+        serverProgressDay: "2026-07-14",
+        baselineMismatch: true,
+      }),
+    ));
+    await nextTurn();
+
+    const resolutionPromise = resolveWithLocalProgress();
+    const resolveFrame = socket.sent
+      .filter((message) => message !== "ping")
+      .map((message) => decodeClientFrame(message))
+      .findLast((frame) => frame.type === "resolve");
+    assert.ok(resolveFrame);
+    const resolveRequest = decodeResolveBaselineRequest(resolveFrame.protobuf);
+    assert.equal(resolveRequest.choice, BASELINE_CHOICE.USE_LOCAL);
+    assert.equal(resolveRequest.localBaselineId, BASELINE_ID);
+    assert.equal(resolveRequest.expectedServerBaselineId, SERVER_BASELINE_ID);
+
+    socket.message(encodeServerResult(
+      "resolve_result",
+      resolveFrame.requestId,
+      encodeResolveBaselineResponse({
+        baselineId: FORKED_BASELINE_ID,
+        serverVersion: 0,
+        serverUpdatedAtMs: Date.now(),
+        serverProgressDay: "2026-07-13",
+        records: [],
+        stale: false,
+        serverCursor: 0,
+      }),
+    ));
+    assert.equal(await resolutionPromise, true);
+    assert.equal(store.mutableState.baselineId, FORKED_BASELINE_ID);
+
+    await nextTurn();
+    const followUpFrame = exchangeFrames(socket).at(-1);
+    assert.ok(followUpFrame);
+    const followUpRequest = decodeSyncRequest(followUpFrame.protobuf);
+    assert.equal(followUpRequest.baselineId, FORKED_BASELINE_ID);
+    respondToExchange(socket, followUpFrame, [], FORKED_BASELINE_ID);
+    await nextTurn();
   } finally {
     stopCloudSync();
     for (const [key, descriptor] of originalDescriptors) {

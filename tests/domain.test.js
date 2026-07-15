@@ -346,10 +346,10 @@ test("default state contains 48 real days and no virtual day", () => {
   assert.equal(state.days["2026-07-19"].type, DAY_TYPE.SUNDAY);
 });
 
-test("status machine follows pending -> completed -> missed -> completed", () => {
+test("status machine follows pending -> completed -> missed -> pending", () => {
   assert.equal(nextItemStatus(ITEM_STATUS.PENDING), ITEM_STATUS.COMPLETED);
   assert.equal(nextItemStatus(ITEM_STATUS.COMPLETED), ITEM_STATUS.MISSED);
-  assert.equal(nextItemStatus(ITEM_STATUS.MISSED), ITEM_STATUS.COMPLETED);
+  assert.equal(nextItemStatus(ITEM_STATUS.MISSED), ITEM_STATUS.PENDING);
   assert.throws(() => nextItemStatus("unknown"), /unknown item status/);
 });
 

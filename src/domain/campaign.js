@@ -460,12 +460,13 @@ export function isCountedPlanItem(day, item) {
 }
 
 /**
- * pending -> completed -> missed -> completed；进入 completed 后在完成/未完成间切换。
+ * pending -> completed -> missed -> pending。
  * @param {string} status
  */
 export function nextItemStatus(status) {
-  if (status === ITEM_STATUS.PENDING || status === ITEM_STATUS.MISSED) return ITEM_STATUS.COMPLETED;
+  if (status === ITEM_STATUS.PENDING) return ITEM_STATUS.COMPLETED;
   if (status === ITEM_STATUS.COMPLETED) return ITEM_STATUS.MISSED;
+  if (status === ITEM_STATUS.MISSED) return ITEM_STATUS.PENDING;
   throw new RangeError(`unknown item status: ${status}`);
 }
 
