@@ -278,7 +278,7 @@ test("older SSE canonical before a rejected diff Ack converges and only SSE adva
 
     environment.setFocused(false);
     environment.windowEvents.dispatchEvent(new Event("blur"));
-    assert.equal(streams[0].connection.signal.aborted, true);
+    assert.equal(streams[0].connection.signal.aborted, false, "失焦不得断开 SSE");
     store.mutableState.days["2026-07-13"].journal = "离线期间的本地内容";
     store.emitChange();
     await turns();
@@ -286,14 +286,14 @@ test("older SSE canonical before a rejected diff Ack converges and only SSE adva
 
     environment.setFocused(true);
     environment.windowEvents.dispatchEvent(new Event("focus"));
-    await turns();
-    assert.match(streams[1].url, /cursor=1/u);
-    assert.equal(diffRequests.length, 1, "focus 必须先等待 SSE ready");
-    streams[1].connection.send("ready", syncResponse({ nextCursor: 1, serverVersion: 1 }));
     await turns(10);
+    assert.equal(streams.length, 1, "重新聚焦必须复用现有 SSE");
     assert.equal(diffRequests.length, 2);
     assert.equal(diffRequests[1].mutations[0].entityKey, "stella/v1/day/2026-07-13/journal");
     assert.equal(readSyncState(environment.storage).meta.cursor, 1, "diff canonical 不推进全局 cursor");
+    environment.setVisibility("hidden");
+    environment.document.dispatchEvent(new Event("visibilitychange"));
+    assert.equal(streams[0].connection.signal.aborted, true, "隐藏页面仍应断开 SSE");
   } finally {
     stopCloudSync();
     environment.restore();
@@ -491,13 +491,18 @@ test("an unexpected SSE disconnect blocks diff upload until a new ready checkpoi
     await turns(4);
     assert.equal(diffRequests.length, 0, "断线 backoff 期间不得上传 diff");
 
+    environment.setVisibility("hidden");
+    environment.document.dispatchEvent(new Event("visibilitychange"));
     environment.setFocused(false);
-    environment.windowEvents.dispatchEvent(new Event("blur"));
-    environment.setFocused(true);
-    environment.windowEvents.dispatchEvent(new Event("focus"));
+    environment.setVisibility("visible");
+    environment.document.dispatchEvent(new Event("visibilitychange"));
     await turns();
     assert.equal(streams.length, 2);
     streams[1].connection.send("ready", syncResponse());
+    await turns(4);
+    assert.equal(diffRequests.length, 0, "SSE 可在失焦时重连，但 diff 仍应暂停");
+    environment.setFocused(true);
+    environment.windowEvents.dispatchEvent(new Event("focus"));
     await turns(10);
     assert.equal(diffRequests.length, 1, "只有新的 ready checkpoint 后才能恢复上传");
   } finally {

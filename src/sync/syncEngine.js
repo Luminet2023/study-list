@@ -5,7 +5,7 @@ import {
   replaceCampaignAndCloudSyncState,
   saveCloudSyncState,
 } from "../persistence/indexedDb.js";
-import { isPageActive } from "../lib/pageActivity.js";
+import { isPageActive, isPageVisible } from "../lib/pageActivity.js";
 import { summarizeCampaignProgress } from "./baseline.js";
 import { postSyncProtobuf } from "./httpTransport.js";
 import {
@@ -782,26 +782,35 @@ function scheduleChangedStateSync() {
   if (changed) void scheduleCloudSync({ immediate: false });
 }
 
-function pauseCloudSync() {
-  const hadWork = syncTimer !== undefined || Boolean(activeUploadPromise);
+function pauseCloudUpload() {
+  const hadWork = syncTimer !== undefined || retryTimer !== undefined || Boolean(activeUploadPromise);
   clearSyncTimer();
   clearRetryTimer();
   if (hadWork) syncPending = true;
+  activeRequestController?.abort();
+}
+
+function pauseCloudSync() {
+  pauseCloudUpload();
   streamReady = false;
   streamBuffer = undefined;
-  activeRequestController?.abort();
   stream?.pause();
 }
 
 function resumeCloudSync() {
-  if (!isPageActive() || globalThis.navigator?.onLine === false) return;
+  if (!isPageVisible() || globalThis.navigator?.onLine === false) return;
   streamReady = false;
   stream?.resume();
 }
 
 function onCloudVisibilityChange() {
-  if (isPageActive()) resumeCloudSync();
+  if (isPageVisible()) resumeCloudSync();
   else pauseCloudSync();
+}
+
+function resumeCloudUpload() {
+  if (!isPageActive() || globalThis.navigator?.onLine === false || !streamReady) return;
+  drainPendingSync();
 }
 
 function handleStreamState(nextState) {
@@ -849,13 +858,13 @@ export async function startCloudSync(campaignStore, authenticatedOwnerId, option
   globalThis.document?.addEventListener?.("visibilitychange", onCloudVisibilityChange);
   globalThis.addEventListener?.("online", resumeCloudSync);
   globalThis.addEventListener?.("offline", pauseCloudSync);
-  globalThis.addEventListener?.("focus", resumeCloudSync);
-  globalThis.addEventListener?.("blur", pauseCloudSync);
+  globalThis.addEventListener?.("focus", resumeCloudUpload);
+  globalThis.addEventListener?.("blur", pauseCloudUpload);
   const sessionStream = createSyncSseTransport({
     isActive: () => Boolean(
       expectedGeneration === sessionGeneration
       && store === sessionStore
-      && isPageActive()
+      && isPageVisible()
       && globalThis.navigator?.onLine !== false
     ),
     getConnectionParams: () => ({
@@ -1077,8 +1086,8 @@ export function stopCloudSync() {
   globalThis.document?.removeEventListener?.("visibilitychange", onCloudVisibilityChange);
   globalThis.removeEventListener?.("online", resumeCloudSync);
   globalThis.removeEventListener?.("offline", pauseCloudSync);
-  globalThis.removeEventListener?.("focus", resumeCloudSync);
-  globalThis.removeEventListener?.("blur", pauseCloudSync);
+  globalThis.removeEventListener?.("focus", resumeCloudUpload);
+  globalThis.removeEventListener?.("blur", pauseCloudUpload);
   store = undefined;
   ownerId = undefined;
   syncState = undefined;

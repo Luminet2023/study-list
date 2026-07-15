@@ -76,7 +76,7 @@ VITE_API_BASE_URL=https://api.luminet.cn/hifumi/ npm run dev
 1. 本地实际变更最多每 5 秒合并上传至 `POST /hifumi/v1/sync/diff`。
 2. 远端变更通过 `GET /hifumi/v1/sync/events` 的 SSE 流接收。
 3. 基线冲突由 `POST /hifumi/v1/sync/resolve` 显式处理。
-4. 页面隐藏、失焦或离线时停止网络同步，但保留本地 outbox；恢复后先追赶 SSE，再继续上传。
+4. 页面隐藏或离线时关闭 SSE 并保留本地 outbox；窗口失焦时保持 SSE、暂停 Diff POST，重新聚焦后复用当前 checkpoint 恢复上传。
 
 请求使用带 Base64 Protobuf 的版本化 JSON 信封。前端没有 WebSocket 或周期性 HTTP 拉取回退。
 

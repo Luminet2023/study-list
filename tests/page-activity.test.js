@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { isPageActive } from "../src/lib/pageActivity.js";
+import { isPageActive, isPageVisible } from "../src/lib/pageActivity.js";
 
 function withDocument(document, callback) {
   const descriptor = Object.getOwnPropertyDescriptor(globalThis, "document");
@@ -23,5 +23,14 @@ test("page activity requires both visibility and focus", () => {
   });
   withDocument({ visibilityState: "visible", hasFocus: () => true }, () => {
     assert.equal(isPageActive(), true);
+  });
+});
+
+test("page visibility does not depend on window focus", () => {
+  withDocument({ visibilityState: "hidden", hasFocus: () => true }, () => {
+    assert.equal(isPageVisible(), false);
+  });
+  withDocument({ visibilityState: "visible", hasFocus: () => false }, () => {
+    assert.equal(isPageVisible(), true);
   });
 });
