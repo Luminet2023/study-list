@@ -22,20 +22,3 @@ export function resolveApiUrl(path, baseUrl = configuredApiBaseUrl) {
   if (!baseUrl) return `/${normalizedPath}`;
   return new URL(normalizedPath, normalizedApiBaseUrl(baseUrl)).toString();
 }
-
-export function resolveApiWebSocketUrl(
-  path,
-  {
-    baseUrl = configuredApiBaseUrl,
-    locationHref = globalThis.location?.href,
-  } = {},
-) {
-  const resolved = resolveApiUrl(path, baseUrl);
-  if (!baseUrl && !locationHref) return resolved;
-
-  const url = locationHref ? new URL(resolved, locationHref) : new URL(resolved);
-  if (url.protocol === "https:") url.protocol = "wss:";
-  else if (url.protocol === "http:") url.protocol = "ws:";
-  else throw new TypeError("WebSocket API URL must use HTTP or HTTPS");
-  return url.toString();
-}

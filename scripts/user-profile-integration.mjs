@@ -4,9 +4,9 @@ import { readFile } from "node:fs/promises";
 import { signJwt } from "../worker/jwt.js";
 import {
   bytesToBase64,
-  decodeSyncResponse,
+  decodeDiffResponse,
   base64ToBytes,
-  encodeSyncRequest,
+  encodeDiffRequest,
 } from "../src/sync/protocol.js";
 import { SESSION_ISSUER, apiRequest } from "./api-config.mjs";
 
@@ -75,18 +75,16 @@ assert.equal(updated.avatarUrl, "https://example.com/updated.png");
 assert.equal(updated.email, "profile@example.com", "旧 Session 回填不得清空已保存邮箱");
 
 const baselineId = `baseline_${crypto.randomUUID().replaceAll("-", "")}`;
-const syncResponse = await apiRequest("v1/sync/exchange", {
+const syncResponse = await apiRequest("v1/sync/diff", {
   method: "POST",
   headers: {
     "content-type": "application/json",
     cookie: `stella_session=${encodeURIComponent(updatedToken)}`,
   },
   body: JSON.stringify({
-    protobuf: bytesToBase64(encodeSyncRequest({
+    protobuf: bytesToBase64(encodeDiffRequest({
       deviceId: `device_${crypto.randomUUID().replaceAll("-", "")}`,
-      cursor: 0,
       mutations: [],
-      pullLimit: 128,
       baselineId,
       localVersion: 0,
       localUpdatedAtMs: 0,
@@ -96,7 +94,7 @@ const syncResponse = await apiRequest("v1/sync/exchange", {
 });
 const envelope = await syncResponse.json();
 assert.equal(syncResponse.status, 200, JSON.stringify(envelope));
-assert.equal(decodeSyncResponse(base64ToBytes(envelope.protobuf)).baselineId, baselineId);
+assert.equal(decodeDiffResponse(base64ToBytes(envelope.protobuf)).baselineId, baselineId);
 assert.equal((await session(updatedToken)).id, subject, "用户资料与同一 owner_key 学习数据关联");
 
 console.log("user profile integration: passed");

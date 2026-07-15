@@ -6,11 +6,11 @@ import {
   BASELINE_CHOICE,
   base64ToBytes,
   bytesToBase64,
+  decodeDiffResponse,
   decodeResolveBaselineResponse,
-  decodeSyncResponse,
   encodeJsonValue,
+  encodeDiffRequest,
   encodeResolveBaselineRequest,
-  encodeSyncRequest,
 } from "../src/sync/protocol.js";
 import { SESSION_ISSUER, apiRequest } from "./api-config.mjs";
 
@@ -45,17 +45,15 @@ async function protobufPost(path, token, bytes) {
   return base64ToBytes(envelope.protobuf);
 }
 
-async function exchange(token, baselineId, cursor = 0, mutations = []) {
-  return decodeSyncResponse(await protobufPost(
-    "v1/sync/exchange",
+async function diff(token, baselineId, mutations = []) {
+  return decodeDiffResponse(await protobufPost(
+    "v1/sync/diff",
     token,
-    encodeSyncRequest({
+    encodeDiffRequest({
       deviceId: DEVICE_ID,
-      cursor,
       mutations,
-      pullLimit: 128,
       baselineId,
-      localVersion: cursor,
+      localVersion: 0,
       localUpdatedAtMs: Date.now(),
       localProgressDay: "2026-07-13",
     }),
@@ -82,12 +80,12 @@ const token = await signJwt({
   exp: now + 600,
 }, devVars.SESSION_JWT_SECRET);
 
-const initialized = await exchange(token, BASELINE_A);
+const initialized = await diff(token, BASELINE_A);
 assert.equal(initialized.baselineId, BASELINE_A);
 assert.equal(initialized.baselineMismatch, false);
 assert.equal(initialized.serverVersion, 0);
 
-const mismatch = await exchange(token, BASELINE_B);
+const mismatch = await diff(token, BASELINE_B);
 assert.equal(mismatch.baselineMismatch, true);
 assert.equal(mismatch.baselineId, BASELINE_A);
 assert.equal(mismatch.serverVersion, 0, "基线不一致时不得写入服务端");
@@ -136,17 +134,17 @@ assert.equal(keptClient.serverVersion, 1);
 assert.equal(keptClient.serverCursor, 1);
 assert.equal(keptClient.serverProgressDay, "2026-07-15");
 
-const oldDevice = await exchange(token, BASELINE_A);
+const oldDevice = await diff(token, BASELINE_A);
 assert.equal(oldDevice.baselineMismatch, true);
 assert.equal(oldDevice.baselineId, BASELINE_B);
 assert.equal(oldDevice.serverVersion, 1);
 
-const currentDevice = await exchange(token, BASELINE_B, 1);
+const currentDevice = await diff(token, BASELINE_B);
 assert.equal(currentDevice.baselineMismatch, false);
 assert.equal(currentDevice.baselineId, BASELINE_B);
 assert.equal(currentDevice.serverVersion, 1);
 
-const clientOverwrite = await exchange(token, BASELINE_B, 1, [{
+const clientOverwrite = await diff(token, BASELINE_B, [{
   opId: `overwrite_${crypto.randomUUID().replaceAll("-", "")}`,
   entityKey: "stella/v1/day/2026-07-15/journal",
   baseVersion: 1,
@@ -160,7 +158,7 @@ assert.equal(clientOverwrite.acks[0].applied, true);
 assert.equal(clientOverwrite.acks[0].conflict, false, "同基线客户端覆盖不应计为冲突");
 assert.equal(clientOverwrite.serverVersion, 2, "一个同步批次只增加一个逻辑版本");
 
-const emptyMismatch = await exchange(token, BASELINE_C);
+const emptyMismatch = await diff(token, BASELINE_C);
 assert.equal(emptyMismatch.baselineMismatch, true);
 assert.equal(emptyMismatch.serverVersion, 2);
 

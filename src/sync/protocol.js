@@ -306,6 +306,74 @@ export function decodeSyncResponse(input) {
   return result;
 }
 
+export function encodeDiffRequest(request) {
+  return concat([
+    stringField(1, request.deviceId),
+    ...request.mutations.map((mutation) => messageField(2, encodeMutation(mutation))),
+    stringField(3, request.baselineId),
+    uintField(4, request.localVersion),
+    uintField(5, request.localUpdatedAtMs),
+    stringField(6, request.localProgressDay),
+  ]);
+}
+
+export function decodeDiffRequest(input) {
+  const result = {
+    deviceId: "",
+    mutations: [],
+    baselineId: "",
+    localVersion: 0,
+    localUpdatedAtMs: 0,
+    localProgressDay: "",
+  };
+  decodeMessage(input, {
+    1: (reader) => { result.deviceId = reader.readString(); },
+    2: (reader) => { result.mutations.push(decodeMutation(reader.readBytes())); },
+    3: (reader) => { result.baselineId = reader.readString(); },
+    4: (reader) => { result.localVersion = reader.readNumber(); },
+    5: (reader) => { result.localUpdatedAtMs = reader.readNumber(); },
+    6: (reader) => { result.localProgressDay = reader.readString(); },
+  });
+  return result;
+}
+
+export function encodeDiffResponse(response) {
+  return concat([
+    ...response.acks.map((ack) => messageField(1, encodeAck(ack))),
+    ...response.canonicalChanges.map((change) => messageField(2, encodeChange(change))),
+    stringField(3, response.baselineId),
+    uintField(4, response.serverCursor),
+    uintField(5, response.serverVersion),
+    uintField(6, response.serverUpdatedAtMs),
+    stringField(7, response.serverProgressDay),
+    boolField(8, response.baselineMismatch),
+  ]);
+}
+
+export function decodeDiffResponse(input) {
+  const result = {
+    acks: [],
+    canonicalChanges: [],
+    baselineId: "",
+    serverCursor: 0,
+    serverVersion: 0,
+    serverUpdatedAtMs: 0,
+    serverProgressDay: "",
+    baselineMismatch: false,
+  };
+  decodeMessage(input, {
+    1: (reader) => { result.acks.push(decodeAck(reader.readBytes())); },
+    2: (reader) => { result.canonicalChanges.push(decodeChange(reader.readBytes())); },
+    3: (reader) => { result.baselineId = reader.readString(); },
+    4: (reader) => { result.serverCursor = reader.readNumber(); },
+    5: (reader) => { result.serverVersion = reader.readNumber(); },
+    6: (reader) => { result.serverUpdatedAtMs = reader.readNumber(); },
+    7: (reader) => { result.serverProgressDay = reader.readString(); },
+    8: (reader) => { result.baselineMismatch = Boolean(reader.readNumber()); },
+  });
+  return result;
+}
+
 export function encodeResolveBaselineRequest(request) {
   return concat([
     stringField(1, request.requestId),

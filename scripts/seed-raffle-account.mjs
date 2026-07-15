@@ -5,11 +5,13 @@ import { createAward, PRIZE_DEFINITIONS } from "../src/domain/raffle.js";
 import {
   base64ToBytes,
   bytesToBase64,
+  decodeDiffResponse,
   decodeJsonValue,
   decodeSyncResponse,
+  encodeDiffRequest,
   encodeJsonValue,
-  encodeSyncRequest,
 } from "../src/sync/protocol.js";
+import { createSseParser } from "../src/sync/sseTransport.js";
 import { signJwt } from "../worker/jwt.js";
 import { SESSION_ISSUER, apiRequest } from "./api-config.mjs";
 
@@ -54,18 +56,16 @@ const deviceId = `device_raffle_seed_${batchId}`;
 const probeBaseline = `baseline_${crypto.randomUUID().replaceAll("-", "")}`;
 let clientSeq = 0;
 
-async function exchange({ baselineId, cursor = 0, mutations = [], localVersion = 0 }) {
-  const request = encodeSyncRequest({
+async function diff({ baselineId, mutations = [], localVersion = 0 }) {
+  const request = encodeDiffRequest({
     deviceId,
-    cursor,
     mutations,
-    pullLimit: 256,
     baselineId,
     localVersion,
     localUpdatedAtMs: Date.now(),
     localProgressDay: "2026-07-13",
   });
-  const response = await apiRequest("v1/sync/exchange", {
+  const response = await apiRequest("v1/sync/diff", {
     method: "POST",
     headers: {
       "content-type": "application/json",
@@ -74,11 +74,47 @@ async function exchange({ baselineId, cursor = 0, mutations = [], localVersion =
     body: JSON.stringify({ protobuf: bytesToBase64(request) }),
   });
   const envelope = await response.json().catch(() => null);
-  assert.equal(response.status, 200, `sync exchange failed: ${response.status} ${JSON.stringify(envelope)}`);
-  return decodeSyncResponse(base64ToBytes(envelope.protobuf));
+  assert.equal(response.status, 200, `sync diff failed: ${response.status} ${JSON.stringify(envelope)}`);
+  return decodeDiffResponse(base64ToBytes(envelope.protobuf));
 }
 
-const probe = await exchange({ baselineId: probeBaseline });
+async function readSseSnapshot(baselineId, cursor = 0) {
+  const response = await apiRequest(
+    `v1/sync/events?baselineId=${encodeURIComponent(baselineId)}&cursor=${cursor}`,
+    {
+      headers: {
+        accept: "text/event-stream",
+        cookie: `stella_session=${encodeURIComponent(token)}`,
+      },
+    },
+  );
+  assert.equal(response.status, 200, `sync events failed: ${response.status}`);
+  assert.ok(response.body?.getReader, "sync events response is not a readable stream");
+  const reader = response.body.getReader();
+  const parser = createSseParser();
+  const changes = [];
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) throw new Error("sync events closed before ready");
+      for (const event of parser.feed(value)) {
+        if (!["changes", "ready"].includes(event.type)) {
+          throw new Error(`unexpected sync event: ${event.type}`);
+        }
+        const envelope = JSON.parse(event.data);
+        assert.equal(envelope.version, 1);
+        const message = decodeSyncResponse(base64ToBytes(envelope.protobuf));
+        changes.push(...message.changes);
+        cursor = message.nextCursor;
+        if (event.type === "ready") return { changes, cursor };
+      }
+    }
+  } finally {
+    await reader.cancel().catch(() => {});
+  }
+}
+
+const probe = await diff({ baselineId: probeBaseline });
 const baselineId = probe.baselineId || probeBaseline;
 const drawDate = "2026-07-13";
 const createdAt = new Date().toISOString();
@@ -132,7 +168,7 @@ for (const prize of prizes) {
   );
 }
 
-const seeded = await exchange({
+const seeded = await diff({
   baselineId,
   mutations,
   localVersion: probe.serverVersion,
@@ -145,14 +181,9 @@ for (const ack of seeded.acks) {
 }
 
 const pulled = new Map();
-let cursor = 0;
-for (let page = 0; page < 8; page += 1) {
-  const response = await exchange({ baselineId, cursor, localVersion: seeded.serverVersion });
-  for (const change of response.changes) {
-    if (!change.deleted) pulled.set(change.entityKey, decodeJsonValue(change.valueJson));
-  }
-  cursor = response.nextCursor;
-  if (!response.hasMore) break;
+const snapshot = await readSseSnapshot(baselineId);
+for (const change of snapshot.changes) {
+  if (!change.deleted) pulled.set(change.entityKey, decodeJsonValue(change.valueJson));
 }
 
 for (const entityKey of expectedKeys) assert.equal(pulled.has(entityKey), true, `未拉回 ${entityKey}`);

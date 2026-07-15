@@ -5,11 +5,15 @@ import {
   base64ToBytes,
   BASELINE_CHOICE,
   bytesToBase64,
+  decodeDiffRequest,
+  decodeDiffResponse,
   decodeResolveBaselineRequest,
   decodeResolveBaselineResponse,
   decodeSyncRequest,
   decodeSyncResponse,
   encodeJsonValue,
+  encodeDiffRequest,
+  encodeDiffResponse,
   encodeResolveBaselineRequest,
   encodeResolveBaselineResponse,
   encodeSyncRequest,
@@ -49,6 +53,57 @@ test("protobuf sync request round-trips mutations", () => {
     }],
   };
   assert.deepEqual(decodeSyncRequest(encodeSyncRequest(request)), request);
+});
+
+test("diff protobuf uses the locked deterministic wire format", () => {
+  const request = {
+    deviceId: "device-a",
+    mutations: [{
+      opId: "op-1",
+      entityKey: "stella/v1/day/2026-07-13/journal",
+      baseVersion: 12,
+      clientTimeMs: 1_789_000_000_000,
+      valueJson: encodeJsonValue("# 今天"),
+      deleted: false,
+      deviceId: "device-a",
+      clientSeq: 7,
+    }],
+    baselineId: "baseline_0123456789abcdef0123456789abcdef",
+    localVersion: 18,
+    localUpdatedAtMs: 1_789_000_000_020,
+    localProgressDay: "2026-07-18",
+  };
+  const requestBytes = encodeDiffRequest(request);
+  assert.equal(
+    Buffer.from(requestBytes).toString("hex"),
+    "0a086465766963652d6112490a046f702d3112207374656c6c612f76312f6461792f323032362d30372d31332f6a6f75726e616c180c2080c4d6c588342a0a222320e4bb8ae5a4a9223a086465766963652d6140071a29626173656c696e655f303132333435363738396162636465663031323334353637383961626364656620122894c4d6c58834320a323032362d30372d3138",
+  );
+  assert.deepEqual(decodeDiffRequest(requestBytes), request);
+
+  const response = {
+    acks: [{ opId: "op-1", serverCursor: 13, conflict: false, applied: true }],
+    canonicalChanges: [{
+      cursor: 13,
+      entityKey: request.mutations[0].entityKey,
+      valueJson: request.mutations[0].valueJson,
+      deleted: false,
+      deviceId: "device-a",
+      clientTimeMs: request.mutations[0].clientTimeMs,
+      opId: "op-1",
+    }],
+    baselineId: request.baselineId,
+    serverCursor: 13,
+    serverVersion: 4,
+    serverUpdatedAtMs: 1_789_000_000_030,
+    serverProgressDay: "2026-07-18",
+    baselineMismatch: false,
+  };
+  const responseBytes = encodeDiffResponse(response);
+  assert.equal(
+    Buffer.from(responseBytes).toString("hex"),
+    "0a0a0a046f702d31100d20011247080d12207374656c6c612f76312f6461792f323032362d30372d31332f6a6f75726e616c1a0a222320e4bb8ae5a4a9222a086465766963652d613080c4d6c588343a046f702d311a29626173656c696e655f3031323334353637383961626364656630313233343536373839616263646566200d2804309ec4d6c588343a0a323032362d30372d3138",
+  );
+  assert.deepEqual(decodeDiffResponse(responseBytes), response);
 });
 
 test("baseline resolution protobuf round-trips the explicit overwrite decision", () => {
